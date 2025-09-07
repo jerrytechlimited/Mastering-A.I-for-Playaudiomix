@@ -192,78 +192,30 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   return audioCtx.startRendering();
 }
 
-// --- Dual WebAudio Realtime FX players ---
-// Target audio player
-let targetCtx2 = null, targetSource2 = null, targetGain2 = null, targetNoise2 = null, targetSplitter2 = null, targetLeftGain2 = null, targetRightGain2 = null, targetMerger2 = null;
+// --- Target player: NO FX ---
+let targetCtx2 = null, targetSource2 = null;
 let targetBuffer2 = null, targetIsPlaying2 = false, targetStartTime2 = 0, targetOffset2 = 0, targetDuration2 = 0, targetAnimFrame2 = null;
-let targetSeekTarget2 = 0;
-// Mastered player
-let fxCtx2 = null, fxSource2 = null, fxGain2 = null, fxNoise2 = null, fxSplitter2 = null, fxLeftGain2 = null, fxRightGain2 = null, fxMerger2 = null;
-let fxBuffer2 = null, fxIsPlaying2 = false, fxStartTime2 = 0, fxOffset2 = 0, fxDuration2 = 0, fxAnimFrame2 = null;
-let fxSeekTarget2 = 0;
-
 function clearTargetFX2() {
   if (targetSource2) { try { targetSource2.stop(); } catch{} }
   if (targetCtx2) { try { targetCtx2.close(); } catch{} }
-  targetCtx2 = targetSource2 = targetGain2 = targetNoise2 = targetSplitter2 = targetLeftGain2 = targetRightGain2 = targetMerger2 = null;
+  targetCtx2 = targetSource2 = null;
   targetIsPlaying2 = false;
   targetStartTime2 = 0;
   targetDuration2 = 0;
   if (targetAnimFrame2) cancelAnimationFrame(targetAnimFrame2);
   targetAnimFrame2 = null;
 }
-function makeTargetFXChain(buffer, params) {
-  targetCtx2 = new (window.AudioContext || window.webkitAudioContext)();
-  targetSource2 = targetCtx2.createBufferSource();
-  targetSource2.buffer = buffer;
-
-  targetGain2 = targetCtx2.createGain();
-  targetGain2.gain.value = params.gain || 1;
-
-  if (params.noiseReduction && params.noiseReduction > 0) {
-    targetNoise2 = targetCtx2.createDynamicsCompressor();
-    targetNoise2.threshold.value = -60 + (params.noiseReduction * 30);
-    targetNoise2.ratio.value = 8;
-    targetNoise2.attack.value = 0.005;
-    targetNoise2.release.value = 0.1;
-  } else {
-    targetNoise2 = null;
-  }
-
-  if (typeof params.stereoWidth !== "undefined" && buffer.numberOfChannels > 1) {
-    targetSplitter2 = targetCtx2.createChannelSplitter(2);
-    targetMerger2 = targetCtx2.createChannelMerger(2);
-    targetLeftGain2 = targetCtx2.createGain();
-    targetRightGain2 = targetCtx2.createGain();
-    targetLeftGain2.gain.value = Math.max(0, Math.min(2, params.stereoWidth));
-    targetRightGain2.gain.value = Math.max(0, Math.min(2, params.stereoWidth));
-  } else {
-    targetSplitter2 = targetMerger2 = targetLeftGain2 = targetRightGain2 = null;
-  }
-
-  let last = targetSource2;
-  last.connect(targetGain2);
-  last = targetGain2;
-  if (targetNoise2) { last.connect(targetNoise2); last = targetNoise2; }
-  if (targetSplitter2 && targetLeftGain2 && targetRightGain2 && targetMerger2) {
-    last.connect(targetSplitter2);
-    targetSplitter2.connect(targetLeftGain2, 0);
-    targetSplitter2.connect(targetRightGain2, 1);
-    targetLeftGain2.connect(targetMerger2, 0, 0);
-    targetRightGain2.connect(targetMerger2, 0, 1);
-    last = targetMerger2;
-  }
-  last.connect(targetCtx2.destination);
-}
 function playTargetFX2(startAt = 0) {
   if (!targetBuffer2) return;
   pauseFX2(true); // Stop mastered if playing!
   clearTargetFX2();
-  const params = getCurrentFXParams();
-  makeTargetFXChain(targetBuffer2, params);
+  targetCtx2 = new (window.AudioContext || window.webkitAudioContext)();
+  targetSource2 = targetCtx2.createBufferSource();
+  targetSource2.buffer = targetBuffer2;
   targetIsPlaying2 = true;
   targetOffset2 = startAt || 0;
   targetDuration2 = targetBuffer2.duration;
+  targetSource2.connect(targetCtx2.destination);
   targetSource2.start(0, targetOffset2);
   targetStartTime2 = targetCtx2.currentTime;
   document.getElementById('targetPlayPause2').textContent = "⏸";
@@ -307,7 +259,9 @@ function updateTargetUI2(forceTime) {
   if (targetIsPlaying2) targetAnimFrame2 = requestAnimationFrame(updateTargetUI2);
 }
 
-// Mastered output player
+// --- Mastered output player: FX applied ---
+let fxCtx2 = null, fxSource2 = null, fxGain2 = null, fxNoise2 = null, fxSplitter2 = null, fxLeftGain2 = null, fxRightGain2 = null, fxMerger2 = null;
+let fxBuffer2 = null, fxIsPlaying2 = false, fxStartTime2 = 0, fxOffset2 = 0, fxDuration2 = 0, fxAnimFrame2 = null;
 function clearFX2() {
   if (fxSource2) { try { fxSource2.stop(); } catch{} }
   if (fxCtx2) { try { fxCtx2.close(); } catch{} }
@@ -552,14 +506,12 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
   if (fxIsPlaying2) playFX2(seekTime);
 };
 
-// --- FX Controls ---
+// --- FX Controls (mastered only) ---
 ['gainControl2','noiseReduction2','stereoWidth2'].forEach(id =>
   document.getElementById(id).addEventListener('input', () => {
     document.getElementById('gainVal2').innerText = document.getElementById('gainControl2').value;
     document.getElementById('noiseVal2').innerText = document.getElementById('noiseReduction2').value;
     document.getElementById('widthVal2').innerText = document.getElementById('stereoWidth2').value;
-    if (targetBuffer2 && targetIsPlaying2) playTargetFX2(getTargetCurrentTime2());
-    else if (targetBuffer2) updateTargetUI2();
     if (fxBuffer2 && fxIsPlaying2) playFX2(getFXCurrentTime2());
     else if (fxBuffer2) updateFXUI2();
   })
