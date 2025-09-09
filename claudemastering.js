@@ -4,7 +4,7 @@ const REFERENCE_TRACKS2 = {
   AFROBEAT: "https://res.cloudinary.com/dozclei2n/video/upload/v1757219191/fast-rock-353534_gbhgxb.mp3",
   BLUES: "https://res.cloudinary.com/dozclei2n/video/upload/v1757082977/RetroFuture-Clean_chosic.com_p0kdyi.mp3",
   "GOSPEL WORSHIP": "https://res.cloudinary.com/dozclei2n/video/upload/v1757088423/Michael_W_Smith_-_Grace_CeeNaija.com__sgddlp.mp3",
-  "GOSPEL PRAISE": "https://res.com/dozclei2n/video/upload/v1757087741/Frank_Edwards_-_Under_The_Canopy_CeeNaija.com__mmph2d.mp3",
+  "GOSPEL PRAISE": "https://res.cloudinary.com/dozclei2n/video/upload/v1757087741/Frank_Edwards_-_Under_The_Canopy_CeeNaija.com__mmph2d.mp3", // fixed url typo!
   RAGGAE: "https://res.cloudinary.com/dozclei2n/video/upload/v1757218452/Patoranking_Celebrate_Me_9jaflaver.com__d6kghx.mp3",
   RNB: "https://res.cloudinary.com/dozclei2n/video/upload/v1757219016/smoke-143172_rognzf.mp3",
   HIGHLIFE: "https://res.cloudinary.com/dozclei2n/video/upload/v1757218457/Nathaniel_Bassey_-_TOBECHUKWU_Praise_God_Ft_Mercy_Chinwo_Blessed_CeeNaija.com__ilpuyo.mp3",
@@ -40,7 +40,8 @@ function computeFeatures2(audioBuffer) {
     if (absVal > peak) peak = absVal;
   }
   const mean = channelData.reduce((s, v) => s + v, 0) / length;
-  const std = Math.sqrt(channelData.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / length);
+  const std = Math.sqrt(channelData.reduce((s, v) => Math.pow(v - mean, 2) + s, 0) / length);
+
   // FFT
   const fftSize = 8192;
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -114,13 +115,13 @@ function makeExciter(audioCtx, gain) {
 }
 
 function makeMSNode(audioCtx, width) {
+  // Not used in the main chain in this fix, but left for future use
   const splitter = audioCtx.createChannelSplitter(2);
   const merger = audioCtx.createChannelMerger(2);
   const mid = audioCtx.createGain();
   const side = audioCtx.createGain();
   mid.gain.value = 1;
   side.gain.value = width;
-
   splitter.connect(mid, 0);
   splitter.connect(mid, 1);
   splitter.connect(side, 0);
@@ -194,12 +195,7 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     noiseGate.release.value = 0.1;
   }
 
-  let stereoNode = null;
-  if (userParams.stereoWidth !== undefined && targetBuffer.numberOfChannels > 1) {
-    stereoNode = makeMSNode(audioCtx, userParams.stereoWidth);
-  }
-
-  // --- Corrected Connection Chain ---
+  // --- Connection Chain ---
   let lastNode = src;
   lastNode.connect(gainNode);
   lastNode = gainNode;
@@ -209,15 +205,23 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     lastNode = noiseGate;
   }
 
-  const mainMerger = audioCtx.createChannelMerger(2);
-
-  // Main signal path: EQ -> Compressor -> Merger
+  // Main path: EQ -> Compressor
   lastNode.connect(eqLow).connect(eqMid).connect(eqHigh).connect(comp);
-  comp.connect(mainMerger, 0, 0);
-  comp.connect(mainMerger, 0, 1);
 
-  // Exciter signal path: High-pass Filter -> Exciter -> Merger
-  lastNode.connect(exciterHPF);
-  exciterHPF.connect(exciterNode).connect(exciterGain);
-  exciterGain.connect(mainMerger, 0, 0);
-  exciterGain.connect(mainMerger, 0
+  // Exciter path: tap after EQ, split and mix before output
+  eqHigh.connect(exciterHPF);
+  exciterHPF.connect(exciterNode);
+  exciterNode.connect(exciterGain);
+
+  // Merger: combine comp (main) and exciterGain (exciter) into two channels
+  const merger = audioCtx.createChannelMerger(2);
+  comp.connect(merger, 0, 0);        // main signal
+  exciterGain.connect(merger, 0, 0); // add exciter to left
+  exciterGain.connect(merger, 0, 1); // add exciter to right
+
+  merger.connect(audioCtx.destination);
+
+  src.start(0);
+  const renderedBuffer = await audioCtx.startRendering();
+  return renderedBuffer;
+}
