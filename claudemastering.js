@@ -4,7 +4,7 @@ const REFERENCE_TRACKS2 = {
   AFROBEAT: "https://res.cloudinary.com/dozclei2n/video/upload/v1757219191/fast-rock-353534_gbhgxb.mp3",
   BLUES: "https://res.cloudinary.com/dozclei2n/video/upload/v1757082977/RetroFuture-Clean_chosic.com_p0kdyi.mp3",
   "GOSPEL WORSHIP": "https://res.cloudinary.com/dozclei2n/video/upload/v1757088423/Michael_W_Smith_-_Grace_CeeNaija.com__sgddlp.mp3",
-  "GOSPEL PRAISE": "https://res.cloudinary.com/dozclei2n/video/upload/v1757087741/Frank_Edwards_-_Under_The_Canopy_CeeNaija.com__mmph2d.mp3",
+  "GOSPEL PRAISE": "https://res.com/dozclei2n/video/upload/v1757087741/Frank_Edwards_-_Under_The_Canopy_CeeNaija.com__mmph2d.mp3",
   RAGGAE: "https://res.cloudinary.com/dozclei2n/video/upload/v1757218452/Patoranking_Celebrate_Me_9jaflaver.com__d6kghx.mp3",
   RNB: "https://res.cloudinary.com/dozclei2n/video/upload/v1757219016/smoke-143172_rognzf.mp3",
   HIGHLIFE: "https://res.cloudinary.com/dozclei2n/video/upload/v1757218457/Nathaniel_Bassey_-_TOBECHUKWU_Praise_God_Ft_Mercy_Chinwo_Blessed_CeeNaija.com__ilpuyo.mp3",
@@ -209,24 +209,24 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     lastNode = noiseGate;
   }
 
-  const mainSignalEnd = lastNode.connect(eqLow).connect(eqMid).connect(eqHigh);
+  const mainMerger = audioCtx.createChannelMerger(2);
 
+  // Main signal path: EQ -> Compressor -> Merger
+  lastNode.connect(eqLow).connect(eqMid).connect(eqHigh).connect(comp);
+  comp.connect(mainMerger, 0, 0);
+  comp.connect(mainMerger, 0, 1);
+
+  // Exciter signal path: High-pass Filter -> Exciter -> Merger
   lastNode.connect(exciterHPF);
   exciterHPF.connect(exciterNode).connect(exciterGain);
-
-  const mainMerger = audioCtx.createChannelMerger(2);
-  mainSignalEnd.connect(mainMerger, 0, 0);
-  mainSignalEnd.connect(mainMerger, 0, 1);
   exciterGain.connect(mainMerger, 0, 0);
   exciterGain.connect(mainMerger, 0, 1);
 
-  mainMerger.connect(comp);
-
   if (stereoNode) {
-    comp.connect(stereoNode.splitter);
+    mainMerger.connect(stereoNode.splitter);
     stereoNode.merger.connect(audioCtx.destination);
   } else {
-    comp.connect(audioCtx.destination);
+    mainMerger.connect(audioCtx.destination);
   }
 
   src.start();
@@ -333,6 +333,17 @@ function makeRealtimeFXChain(buffer, params) {
     noiseGate.release.value = 0.1;
   }
 
+  function makeEQ(type, freq, gain) {
+    const eq = fxCtx2.createBiquadFilter();
+    eq.type = type;
+    eq.frequency.value = freq;
+    eq.gain.value = gain;
+    return eq;
+  }
+  const eqLow = makeEQ("lowshelf", 150, 0);
+  const eqMid = makeEQ("peaking", 1000, 0);
+  const eqHigh = makeEQ("highshelf", 6000, 0);
+
   const exciterNode = makeExciter(fxCtx2, params.excitement || 1.5);
   const exciterHPF = fxCtx2.createBiquadFilter();
   exciterHPF.type = 'highpass';
@@ -340,248 +351,4 @@ function makeRealtimeFXChain(buffer, params) {
   const exciterGain = fxCtx2.createGain();
   exciterGain.gain.value = params.excitementGain || 0.1;
 
-  const comp = fxCtx2.createDynamicsCompressor();
-  comp.threshold.value = -20 + window._mastering_temp.referenceFeatures.std * 10;
-  comp.ratio.value = 2.5;
-  comp.attack.value = 0.003;
-  comp.release.value = 0.25;
-
-  let stereoNode = null;
-  if (typeof params.stereoWidth !== "undefined" && buffer.numberOfChannels > 1) {
-    stereoNode = makeMSNode(fxCtx2, params.stereoWidth);
-  }
-
-  // --- Corrected Connection Chain ---
-  let lastNode = fxSource2;
-  lastNode.connect(gainNode);
-  lastNode = gainNode;
-
-  if (noiseGate) {
-    lastNode.connect(noiseGate);
-    lastNode = noiseGate;
-  }
-
-  // Split into two parallel paths: main (to compressor) and exciter
-  const mainMerger = fxCtx2.createChannelMerger(2);
-
-  // Main signal path: to compressor, then to the merger
-  lastNode.connect(comp);
-  comp.connect(mainMerger, 0, 0);
-  comp.connect(mainMerger, 0, 1);
-
-  // Exciter signal path: to high-pass filter, then to exciter, then to the merger
-  lastNode.connect(exciterHPF);
-  exciterHPF.connect(exciterNode).connect(exciterGain);
-  exciterGain.connect(mainMerger, 0, 0);
-  exciterGain.connect(mainMerger, 0, 1);
-
-  // Connect the final merger to the stereo node or destination
-  if (stereoNode) {
-    mainMerger.connect(stereoNode.splitter);
-    stereoNode.merger.connect(fxCtx2.destination);
-  } else {
-    mainMerger.connect(fxCtx2.destination);
-  }
-}
-
-function playFX2(startAt = 0) {
-  if (!fxBuffer2) return;
-  pauseTargetFX2(true);
-  clearFX2();
-  const params = getCurrentFXParams();
-  makeRealtimeFXChain(fxBuffer2, params);
-  fxIsPlaying2 = true;
-  fxOffset2 = startAt || 0;
-  fxDuration2 = fxBuffer2.duration;
-  fxSource2.start(0, fxOffset2);
-  fxStartTime2 = fxCtx2.currentTime;
-  document.getElementById('fxPlayPause2').textContent = "⏸";
-  updateFXUI2();
-
-  fxSource2.onended = () => {
-    fxIsPlaying2 = false;
-    document.getElementById('fxPlayPause2').textContent = "▶";
-    cancelAnimationFrame(fxAnimFrame2);
-    fxAnimFrame2 = null;
-  };
-}
-
-function pauseFX2(silent) {
-  if (!fxIsPlaying2) return;
-  if (fxSource2) {
-    try { fxSource2.stop(); } catch {}
-  }
-  fxOffset2 = getFXCurrentTime2();
-  fxIsPlaying2 = false;
-  document.getElementById('fxPlayPause2').textContent = "▶";
-  cancelAnimationFrame(fxAnimFrame2);
-  fxAnimFrame2 = null;
-  if (!silent) pauseTargetFX2(true);
-}
-
-function seekFX2(time) {
-  fxOffset2 = time;
-  if (fxIsPlaying2) playFX2(time);
-  else updateFXUI2(time);
-}
-
-function getFXCurrentTime2() {
-  if (!fxIsPlaying2) return fxOffset2;
-  return (fxCtx2.currentTime - fxStartTime2) + fxOffset2;
-}
-
-function updateFXUI2(forceTime) {
-  const duration = fxDuration2 || (fxBuffer2 && fxBuffer2.duration) || 0;
-  const current = typeof forceTime === "number" ? forceTime : getFXCurrentTime2();
-  document.getElementById('fxTime2').textContent =
-    `${formatTime(current)} / ${formatTime(duration)}`;
-  let percent = duration ? Math.min(100, (current / duration) * 100) : 0;
-  document.getElementById('fxProgressFill2').style.width = percent + "%";
-  if (fxIsPlaying2) fxAnimFrame2 = requestAnimationFrame(updateFXUI2);
-}
-
-// --- Utilities ---
-function formatTime(sec) {
-  sec = Math.max(0, Math.floor(sec));
-  return `${Math.floor(sec/60)}:${('0'+(sec%60)).slice(-2)}`;
-}
-function getCurrentFXParams() {
-  return {
-    gain: parseFloat(document.getElementById('gainControl2').value),
-    noiseReduction: parseFloat(document.getElementById('noiseReduction2').value),
-    stereoWidth: parseFloat(document.getElementById('stereoWidth2').value),
-    excitement: parseFloat(document.getElementById('excitementControl2').value)
-  }
-}
-
-// --- Load Target Audio ---
-document.getElementById("targetAudio2").addEventListener("change", async function(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  targetBuffer2 = await readAudioFile2(file);
-  targetDuration2 = targetBuffer2.duration;
-  document.getElementById('targetPlayerSection2').style.display = "";
-  document.getElementById('targetPlayPause2').disabled = false;
-  seekTargetFX2(0);
-  updateTargetUI2(0);
-});
-
-// --- Mastering Button ---
-document.getElementById('processBtn2').onclick = async () => {
-  const targetFile = document.getElementById('targetAudio2').files[0];
-  const genreSelect = document.getElementById('genreSelect2');
-  const selectedGenre = genreSelect.value;
-  const status = document.getElementById('status2');
-  status.textContent = "Processing...";
-  document.getElementById('outputPlayerSection2').style.display = "none";
-  document.getElementById('downloadLink2').style.display = "none";
-  document.getElementById('controlsSection2').style.display = "none";
-  if (!targetFile || !selectedGenre) {
-    status.textContent = "Please upload a target audio file and select a reference genre.";
-    return;
-  }
-
-  let percent = 0;
-  const bar = document.getElementById("progressBar2");
-  const text = document.getElementById("progressText2");
-  bar.style.width = "0%";
-  text.textContent = "0%";
-  const interval = setInterval(() => {
-    percent += 5;
-    if (percent > 90) clearInterval(interval);
-    bar.style.width = percent + "%";
-    text.textContent = percent + "%";
-  }, 200);
-
-  try {
-    const referenceArrayBuffer = await fetchReferenceAudio2(selectedGenre);
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const referenceAudio = await audioCtx.decodeAudioData(referenceArrayBuffer);
-    const targetAudio = await readAudioFile2(targetFile);
-
-    const referenceFeatures = await computeFeatures2(referenceAudio);
-
-    let userParams = { gain: 1, noiseReduction: 0, stereoWidth: 1, excitement: 1 };
-    let masteredBuffer = await applyMastering2(targetAudio, referenceFeatures, userParams);
-
-    window._mastering_temp = {
-      targetAudio,
-      referenceFeatures,
-      masteredBuffer
-    };
-    fxBuffer2 = masteredBuffer;
-    fxDuration2 = masteredBuffer.duration;
-
-    const downloadLink = document.getElementById('downloadLink2');
-    downloadLink.onclick = async function(e) {
-      const params = getCurrentFXParams();
-      let buffer = await applyMastering2(targetAudio, referenceFeatures, params);
-      const wavData = await WavEncoder2.encode({
-        sampleRate: buffer.sampleRate,
-        channelData: Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i))
-      });
-      const blob = new Blob([wavData], { type: "audio/wav" });
-      const url = URL.createObjectURL(blob);
-      downloadLink.href = url;
-    }
-
-    document.getElementById('outputPlayerSection2').style.display = "";
-    document.getElementById('fxPlayPause2').disabled = false;
-    document.getElementById('downloadLink2').style.display = "inline-block";
-    document.getElementById('controlsSection2').style.display = "block";
-    bar.style.width = "100%";
-    text.textContent = "100%";
-    status.textContent = "Mastering complete! Adjust final controls and play preview.";
-
-    clearFX2();
-    seekFX2(0);
-    updateFXUI2(0);
-
-  } catch (err) {
-    status.textContent = "Error: " + err.message;
-    bar.style.width = "0%";
-    text.textContent = "0%";
-  } finally {
-    clearInterval(interval);
-  }
-}
-
-// --- Player Controls ---
-document.getElementById('targetPlayPause2').onclick = function() {
-  if (!targetBuffer2) return;
-  if (targetIsPlaying2) pauseTargetFX2();
-  else playTargetFX2(targetOffset2);
-};
-document.getElementById('fxPlayPause2').onclick = function() {
-  if (!fxBuffer2) return;
-  if (fxIsPlaying2) pauseFX2();
-  else playFX2(fxOffset2);
-};
-document.getElementById('targetProgressBar2').onclick = function(e) {
-  if (!targetBuffer2) return;
-  const rect = this.getBoundingClientRect();
-  const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  const seekTime = (targetBuffer2.duration || 0) * percent;
-  seekTargetFX2(seekTime);
-  if (targetIsPlaying2) playTargetFX2(seekTime);
-};
-document.getElementById('fxProgressBar2').onclick = function(e) {
-  if (!fxBuffer2) return;
-  const rect = this.getBoundingClientRect();
-  const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  const seekTime = (fxBuffer2.duration || 0) * percent;
-  seekFX2(seekTime);
-  if (fxIsPlaying2) playFX2(seekTime);
-};
-
-// --- FX Controls (mastered only) ---
-['gainControl2', 'noiseReduction2', 'stereoWidth2', 'excitementControl2'].forEach(id =>
-  document.getElementById(id).addEventListener('input', () => {
-    document.getElementById('gainVal2').innerText = document.getElementById('gainControl2').value;
-    document.getElementById('noiseVal2').innerText = document.getElementById('noiseReduction2').value;
-    document.getElementById('widthVal2').innerText = document.getElementById('stereoWidth2').value;
-    document.getElementById('excitementVal2').innerText = document.getElementById('excitementControl2').value;
-    if (fxBuffer2 && fxIsPlaying2) playFX2(getFXCurrentTime2());
-    else if (fxBuffer2) updateFXUI2();
-  })
-);
+  const comp = fxCtx2.createDynamicsCompress
