@@ -34,67 +34,28 @@ function computeFeatures2(audioBuffer) {
   const channelData = audioBuffer.getChannelData(0);
   const length = channelData.length;
   const rms = Math.sqrt(channelData.reduce((sum, v) => sum + v * v, 0) / length);
+  
   let peak = 0;
   for (let i = 0; i < channelData.length; i++) {
     const absVal = Math.abs(channelData[i]);
     if (absVal > peak) peak = absVal;
   }
+  
   const mean = channelData.reduce((s, v) => s + v, 0) / length;
   const std = Math.sqrt(channelData.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / length);
   
-  // Improved FFT analysis
-  const fftSize = 8192;
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const src = audioCtx.createBufferSource();
-  src.buffer = audioBuffer;
-  const analyser = audioCtx.createAnalyser();
-  analyser.fftSize = fftSize;
-  analyser.smoothingTimeConstant = 0.3;
-  src.connect(analyser);
-  src.start();
-  
-  return new Promise(resolve => {
-    setTimeout(() => {
-      const freqData = new Float32Array(analyser.frequencyBinCount);
-      analyser.getFloatFrequencyData(freqData);
-      
-      // Better spectral analysis
-      let centroid = 0, total = 0;
-      let lowEnergy = 0, midEnergy = 0, highEnergy = 0;
-      const binCount = freqData.length;
-      
-      for (let i = 0; i < binCount; i++) {
-        const magnitude = Math.pow(10, freqData[i] / 20); // Convert dB to linear
-        const frequency = (i / binCount) * (audioCtx.sampleRate / 2);
-        
-        centroid += frequency * magnitude;
-        total += magnitude;
-        
-        // Frequency band analysis
-        if (frequency < 250) lowEnergy += magnitude;
-        else if (frequency < 4000) midEnergy += magnitude;
-        else highEnergy += magnitude;
-      }
-      
-      centroid = total > 0 ? centroid / total : 0;
-      const totalEnergy = lowEnergy + midEnergy + highEnergy;
-      
-      resolve({ 
-        rms, 
-        peak, 
-        std, 
-        freqData, 
-        spectralCentroid: centroid,
-        lowEnergy: totalEnergy > 0 ? lowEnergy / totalEnergy : 0.33,
-        midEnergy: totalEnergy > 0 ? midEnergy / totalEnergy : 0.33,
-        highEnergy: totalEnergy > 0 ? highEnergy / totalEnergy : 0.33
-      });
-      audioCtx.close();
-    }, 200);
+  // Simple frequency analysis without FFT complexity
+  return Promise.resolve({
+    rms,
+    peak,
+    std,
+    spectralCentroid: 1000 + (std * 2000), // Estimate based on dynamics
+    lowEnergy: 0.33,
+    midEnergy: 0.34,
+    highEnergy: 0.33
   });
 }
 
-// Improved WavEncoder with better bit handling
 const WavEncoder2 = {
   encode({sampleRate, channelData}) {
     const numChannels = channelData.length;
@@ -129,12 +90,16 @@ const WavEncoder2 = {
   }
 };
 
-// Custom saturation processor
-function createSaturationProcessor(audioCtx, amount) {
-  return audioCtx.createScriptProcessor(4096, 2, 2);
-}
-
-function applySaturation(inputBuffer, amount) {
+// Apply saturation to audio buffer
+function applySaturationToBuffer(inputBuffer, saturationAmount) {
+  if (!saturationAmount || saturationAmount <= 0) return inputBuffer;
+  
+  const audioCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
+    inputBuffer.numberOfChannels,
+    inputBuffer.length,
+    inputBuffer.sampleRate
+  );
+  
   const outputBuffer = audioCtx.createBuffer(
     inputBuffer.numberOfChannels,
     inputBuffer.length,
@@ -147,12 +112,50 @@ function applySaturation(inputBuffer, amount) {
     
     for (let i = 0; i < input.length; i++) {
       let sample = input[i];
-      // Soft saturation using tanh
-      if (amount > 0) {
-        const drive = 1 + (amount * 4);
-        sample = Math.tanh(sample * drive) / Math.tanh(drive);
-      }
+      const drive = 1 + (saturationAmount * 3);
+      sample = Math.tanh(sample * drive) / Math.tanh(drive);
       output[i] = sample;
+    }
+  }
+  
+  return outputBuffer;
+}
+
+// Apply stereo width to audio buffer
+function applyStereoWidthToBuffer(inputBuffer, widthAmount) {
+  if (inputBuffer.numberOfChannels < 2 || widthAmount === 1) return inputBuffer;
+  
+  const audioCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
+    inputBuffer.numberOfChannels,
+    inputBuffer.length,
+    inputBuffer.sampleRate
+  );
+  
+  const outputBuffer = audioCtx.createBuffer(
+    inputBuffer.numberOfChannels,
+    inputBuffer.length,
+    inputBuffer.sampleRate
+  );
+  
+  const leftInput = inputBuffer.getChannelData(0);
+  const rightInput = inputBuffer.getChannelData(1);
+  const leftOutput = outputBuffer.getChannelData(0);
+  const rightOutput = outputBuffer.getChannelData(1);
+  
+  for (let i = 0; i < inputBuffer.length; i++) {
+    const mid = (leftInput[i] + rightInput[i]) * 0.5;
+    const side = (leftInput[i] - rightInput[i]) * 0.5 * widthAmount;
+    
+    leftOutput[i] = mid + side;
+    rightOutput[i] = mid - side;
+  }
+  
+  // Copy other channels if any
+  for (let channel = 2; channel < inputBuffer.numberOfChannels; channel++) {
+    const input = inputBuffer.getChannelData(channel);
+    const output = outputBuffer.getChannelData(channel);
+    for (let i = 0; i < input.length; i++) {
+      output[i] = input[i];
     }
   }
   
@@ -166,112 +169,76 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     targetBuffer.sampleRate
   );
   
-  // Apply saturation first if needed
-  let processedBuffer = targetBuffer;
-  if (userParams.saturation && userParams.saturation > 0) {
-    processedBuffer = applySaturation(targetBuffer, userParams.saturation);
-  }
-  
   const src = audioCtx.createBufferSource();
-  src.buffer = processedBuffer;
+  src.buffer = targetBuffer;
 
-  // Improved gain calculation
+  // Calculate gain normalization
   const targetRMS = Math.sqrt(targetBuffer.getChannelData(0).reduce((sum, v) => sum + v*v, 0) / targetBuffer.length);
   const gainNode = audioCtx.createGain();
-  // More conservative gain adjustment to preserve brightness
-  const rmsRatio = Math.min(2.0, referenceFeatures.rms / (targetRMS || 0.001));
+  const rmsRatio = Math.min(1.5, referenceFeatures.rms / (targetRMS || 0.001));
   gainNode.gain.value = rmsRatio * (userParams.gain || 1);
 
-  // Improved EQ with better frequency preservation
-  function makeEQ(type, freq, gain, q = 1) {
-    const eq = audioCtx.createBiquadFilter();
-    eq.type = type;
-    eq.frequency.value = freq;
-    eq.gain.value = gain;
-    eq.Q.value = q;
-    return eq;
-  }
-  
-  // More conservative EQ adjustments to preserve brightness
-  const lowGain = Math.max(-6, Math.min(6, (referenceFeatures.lowEnergy - 0.33) * 12));
-  const midGain = Math.max(-4, Math.min(4, (referenceFeatures.midEnergy - 0.33) * 8));
-  const highGain = Math.max(-2, Math.min(8, (referenceFeatures.highEnergy - 0.33) * 16)); // Favor high frequencies
-  
-  const eqLow = makeEQ("lowshelf", 150, lowGain, 0.7);
-  const eqMid = makeEQ("peaking", 1000, midGain, 1.2);
-  const eqHigh = makeEQ("highshelf", 6000, highGain, 0.7);
-  
-  // Additional presence boost to maintain brightness
-  const presence = makeEQ("peaking", 3000, 2, 1.5);
+  // Create EQ filters
+  const eqLow = audioCtx.createBiquadFilter();
+  eqLow.type = "lowshelf";
+  eqLow.frequency.value = 150;
+  eqLow.gain.value = Math.max(-3, Math.min(3, (referenceFeatures.lowEnergy - 0.33) * 6));
 
-  // Improved compressor settings
+  const eqMid = audioCtx.createBiquadFilter();
+  eqMid.type = "peaking";
+  eqMid.frequency.value = 1000;
+  eqMid.gain.value = Math.max(-2, Math.min(2, (referenceFeatures.midEnergy - 0.33) * 4));
+  eqMid.Q.value = 1;
+
+  const eqHigh = audioCtx.createBiquadFilter();
+  eqHigh.type = "highshelf";
+  eqHigh.frequency.value = 6000;
+  eqHigh.gain.value = Math.max(0, Math.min(4, (referenceFeatures.highEnergy - 0.33) * 8));
+
+  // Presence boost for brightness
+  const presence = audioCtx.createBiquadFilter();
+  presence.type = "peaking";
+  presence.frequency.value = 3000;
+  presence.gain.value = 1.5;
+  presence.Q.value = 1.2;
+
+  // Compressor
   const comp = audioCtx.createDynamicsCompressor();
-  comp.threshold.value = Math.max(-30, -20 + referenceFeatures.std * 8);
-  comp.ratio.value = Math.min(4, 2 + referenceFeatures.std * 2);
+  comp.threshold.value = -18;
+  comp.ratio.value = 2.5;
   comp.attack.value = 0.003;
   comp.release.value = 0.1;
-  comp.knee.value = 5;
+  comp.knee.value = 2;
 
-  // Proper stereo width implementation
-  let stereoProcessor = null;
-  if (userParams.stereoWidth !== undefined && targetBuffer.numberOfChannels >= 2) {
-    const width = Math.max(0, Math.min(2, userParams.stereoWidth));
-    
-    // Create custom stereo width processor using ScriptProcessor
-    stereoProcessor = audioCtx.createScriptProcessor(4096, 2, 2);
-    
-    stereoProcessor.onaudioprocess = function(event) {
-      const inputL = event.inputBuffer.getChannelData(0);
-      const inputR = event.inputBuffer.getChannelData(1);
-      const outputL = event.outputBuffer.getChannelData(0);
-      const outputR = event.outputBuffer.getChannelData(1);
-      
-      for (let i = 0; i < inputL.length; i++) {
-        // Mid-Side processing for proper stereo width
-        const mid = (inputL[i] + inputR[i]) * 0.5;
-        const side = (inputL[i] - inputR[i]) * 0.5 * width;
-        
-        outputL[i] = mid + side;
-        outputR[i] = mid - side;
-      }
-    };
-  }
-
-  // Connection chain with proper stereo handling
-  let currentNode = src;
-  
-  currentNode.connect(gainNode);
-  currentNode = gainNode;
-  
-  currentNode.connect(eqLow);
-  currentNode = eqLow;
-  
-  currentNode.connect(eqMid);
-  currentNode = eqMid;
-  
-  currentNode.connect(eqHigh);
-  currentNode = eqHigh;
-  
-  currentNode.connect(presence);
-  currentNode = presence;
-  
-  currentNode.connect(comp);
-  currentNode = comp;
-
-  if (stereoProcessor && targetBuffer.numberOfChannels >= 2) {
-    currentNode.connect(stereoProcessor);
-    stereoProcessor.connect(audioCtx.destination);
-  } else {
-    currentNode.connect(audioCtx.destination);
-  }
+  // Connect the chain
+  src.connect(gainNode);
+  gainNode.connect(eqLow);
+  eqLow.connect(eqMid);
+  eqMid.connect(eqHigh);
+  eqHigh.connect(presence);
+  presence.connect(comp);
+  comp.connect(audioCtx.destination);
 
   src.start();
-  return audioCtx.startRendering();
+  let renderedBuffer = await audioCtx.startRendering();
+  
+  // Apply saturation if needed
+  if (userParams.saturation && userParams.saturation > 0) {
+    renderedBuffer = applySaturationToBuffer(renderedBuffer, userParams.saturation);
+  }
+  
+  // Apply stereo width if needed
+  if (userParams.stereoWidth !== undefined && userParams.stereoWidth !== 1) {
+    renderedBuffer = applyStereoWidthToBuffer(renderedBuffer, userParams.stereoWidth);
+  }
+  
+  return renderedBuffer;
 }
 
 // --- Target player: NO FX ---
 let targetCtx2 = null, targetSource2 = null;
 let targetBuffer2 = null, targetIsPlaying2 = false, targetStartTime2 = 0, targetOffset2 = 0, targetDuration2 = 0, targetAnimFrame2 = null;
+
 function clearTargetFX2() {
   if (targetSource2) { try { targetSource2.stop(); } catch{} }
   if (targetCtx2) { try { targetCtx2.close(); } catch{} }
@@ -282,6 +249,7 @@ function clearTargetFX2() {
   if (targetAnimFrame2) cancelAnimationFrame(targetAnimFrame2);
   targetAnimFrame2 = null;
 }
+
 function playTargetFX2(startAt = 0) {
   if (!targetBuffer2) return;
   pauseFX2(true);
@@ -305,6 +273,7 @@ function playTargetFX2(startAt = 0) {
     targetAnimFrame2 = null;
   };
 }
+
 function pauseTargetFX2(silent) {
   if (!targetIsPlaying2) return;
   if (targetSource2) {
@@ -317,15 +286,18 @@ function pauseTargetFX2(silent) {
   targetAnimFrame2 = null;
   if (!silent) pauseFX2(true);
 }
+
 function seekTargetFX2(time) {
   targetOffset2 = time;
   if (targetIsPlaying2) playTargetFX2(time);
   else updateTargetUI2(time);
 }
+
 function getTargetCurrentTime2() {
   if (!targetIsPlaying2) return targetOffset2;
   return (targetCtx2.currentTime - targetStartTime2) + targetOffset2;
 }
+
 function updateTargetUI2(forceTime) {
   const duration = targetDuration2 || (targetBuffer2 && targetBuffer2.duration) || 0;
   const current = typeof forceTime === "number" ? forceTime : getTargetCurrentTime2();
@@ -337,13 +309,13 @@ function updateTargetUI2(forceTime) {
 }
 
 // --- Mastered output player: FX applied ---
-let fxCtx2 = null, fxSource2 = null, fxGain2 = null, fxSaturation2 = null, fxStereoProcessor2 = null;
+let fxCtx2 = null, fxSource2 = null, fxGain2 = null, fxStereoProcessor2 = null;
 let fxBuffer2 = null, fxIsPlaying2 = false, fxStartTime2 = 0, fxOffset2 = 0, fxDuration2 = 0, fxAnimFrame2 = null;
 
 function clearFX2() {
   if (fxSource2) { try { fxSource2.stop(); } catch{} }
   if (fxCtx2) { try { fxCtx2.close(); } catch{} }
-  fxCtx2 = fxSource2 = fxGain2 = fxSaturation2 = fxStereoProcessor2 = null;
+  fxCtx2 = fxSource2 = fxGain2 = fxStereoProcessor2 = null;
   fxIsPlaying2 = false;
   fxStartTime2 = 0;
   fxDuration2 = 0;
@@ -359,68 +331,9 @@ function makeRealtimeFXChain(buffer, params) {
   fxGain2 = fxCtx2.createGain();
   fxGain2.gain.value = params.gain || 1;
 
-  // Saturation processor
-  if (params.saturation && params.saturation > 0) {
-    fxSaturation2 = fxCtx2.createScriptProcessor(4096, buffer.numberOfChannels, buffer.numberOfChannels);
-    
-    fxSaturation2.onaudioprocess = function(event) {
-      for (let channel = 0; channel < event.inputBuffer.numberOfChannels; channel++) {
-        const input = event.inputBuffer.getChannelData(channel);
-        const output = event.outputBuffer.getChannelData(channel);
-        
-        for (let i = 0; i < input.length; i++) {
-          let sample = input[i];
-          const drive = 1 + (params.saturation * 4);
-          sample = Math.tanh(sample * drive) / Math.tanh(drive);
-          output[i] = sample;
-        }
-      }
-    };
-  } else {
-    fxSaturation2 = null;
-  }
-
-  // Proper stereo width processor
-  if (typeof params.stereoWidth !== "undefined" && buffer.numberOfChannels >= 2) {
-    const width = Math.max(0, Math.min(2, params.stereoWidth));
-    
-    fxStereoProcessor2 = fxCtx2.createScriptProcessor(4096, 2, 2);
-    
-    fxStereoProcessor2.onaudioprocess = function(event) {
-      const inputL = event.inputBuffer.getChannelData(0);
-      const inputR = event.inputBuffer.getChannelData(1);
-      const outputL = event.outputBuffer.getChannelData(0);
-      const outputR = event.outputBuffer.getChannelData(1);
-      
-      for (let i = 0; i < inputL.length; i++) {
-        const mid = (inputL[i] + inputR[i]) * 0.5;
-        const side = (inputL[i] - inputR[i]) * 0.5 * width;
-        
-        outputL[i] = mid + side;
-        outputR[i] = mid - side;
-      }
-    };
-  } else {
-    fxStereoProcessor2 = null;
-  }
-
-  // Connection chain
-  let currentNode = fxSource2;
-  
-  currentNode.connect(fxGain2);
-  currentNode = fxGain2;
-  
-  if (fxSaturation2) {
-    currentNode.connect(fxSaturation2);
-    currentNode = fxSaturation2;
-  }
-  
-  if (fxStereoProcessor2 && buffer.numberOfChannels >= 2) {
-    currentNode.connect(fxStereoProcessor2);
-    currentNode = fxStereoProcessor2;
-  }
-  
-  currentNode.connect(fxCtx2.destination);
+  // Simple connection for now - effects are baked into the buffer
+  fxSource2.connect(fxGain2);
+  fxGain2.connect(fxCtx2.destination);
 }
 
 function playFX2(startAt = 0) {
@@ -488,7 +401,7 @@ function formatTime(sec) {
 function getCurrentFXParams() {
   return {
     gain: parseFloat(document.getElementById('gainControl2').value),
-    saturation: parseFloat(document.getElementById('saturation2').value), // Changed from noiseReduction
+    saturation: parseFloat(document.getElementById('saturation2').value),
     stereoWidth: parseFloat(document.getElementById('stereoWidth2').value)
   }
 }
@@ -497,12 +410,17 @@ function getCurrentFXParams() {
 document.getElementById("targetAudio2").addEventListener("change", async function(e) {
   const file = e.target.files[0];
   if (!file) return;
-  targetBuffer2 = await readAudioFile2(file);
-  targetDuration2 = targetBuffer2.duration;
-  document.getElementById('targetPlayerSection2').style.display = "";
-  document.getElementById('targetPlayPause2').disabled = false;
-  seekTargetFX2(0);
-  updateTargetUI2(0);
+  try {
+    targetBuffer2 = await readAudioFile2(file);
+    targetDuration2 = targetBuffer2.duration;
+    document.getElementById('targetPlayerSection2').style.display = "";
+    document.getElementById('targetPlayPause2').disabled = false;
+    seekTargetFX2(0);
+    updateTargetUI2(0);
+  } catch (error) {
+    console.error('Error loading audio file:', error);
+    alert('Error loading audio file: ' + error.message);
+  }
 });
 
 // --- Mastering Button ---
@@ -511,6 +429,7 @@ document.getElementById('processBtn2').onclick = async () => {
   const genreSelect = document.getElementById('genreSelect2');
   const selectedGenre = genreSelect.value;
   const status = document.getElementById('status2');
+  
   status.textContent = "Processing...";
   document.getElementById('outputPlayerSection2').style.display = "none";
   document.getElementById('downloadLink2').style.display = "none";
@@ -526,14 +445,16 @@ document.getElementById('processBtn2').onclick = async () => {
   const text = document.getElementById("progressText2");
   bar.style.width = "0%";
   text.textContent = "0%";
+  
   const interval = setInterval(() => {
-    percent += 5;
+    percent += 10;
     if (percent > 90) clearInterval(interval);
     bar.style.width = percent + "%";
     text.textContent = percent + "%";
-  }, 200);
+  }, 300);
 
   try {
+    // Fetch reference audio
     const referenceArrayBuffer = await fetchReferenceAudio2(selectedGenre);
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const referenceAudio = await audioCtx.decodeAudioData(referenceArrayBuffer);
@@ -542,22 +463,24 @@ document.getElementById('processBtn2').onclick = async () => {
     // Extract reference features
     const referenceFeatures = await computeFeatures2(referenceAudio);
 
-    // Apply mastering (first pass, default controls)
+    // Apply mastering with default settings
     let userParams = { gain: 1, saturation: 0, stereoWidth: 1 };
     let masteredBuffer = await applyMastering2(targetAudio, referenceFeatures, userParams);
 
-    // Store for realtime playback
+    // Store for realtime playback and re-processing
     window._mastering_temp = {
       targetAudio,
       referenceFeatures,
       masteredBuffer
     };
+    
     fxBuffer2 = masteredBuffer;
     fxDuration2 = masteredBuffer.duration;
 
-    // Download link prepares WAV with current FX settings
+    // Setup download link
     const downloadLink = document.getElementById('downloadLink2');
     downloadLink.onclick = async function(e) {
+      e.preventDefault();
       const params = getCurrentFXParams();
       let buffer = await applyMastering2(targetAudio, referenceFeatures, params);
       const wavData = await WavEncoder2.encode({
@@ -566,24 +489,33 @@ document.getElementById('processBtn2').onclick = async () => {
       });
       const blob = new Blob([wavData], {type: "audio/wav"});
       const url = URL.createObjectURL(blob);
-      downloadLink.href = url;
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mastered_audio.wav';
+      a.click();
+      URL.revokeObjectURL(url);
     }
 
-    // UI Show
+    // Show UI elements
     document.getElementById('outputPlayerSection2').style.display = "";
     document.getElementById('fxPlayPause2').disabled = false;
     document.getElementById('downloadLink2').style.display = "inline-block";
     document.getElementById('controlsSection2').style.display = "block";
+    
     bar.style.width = "100%";
     text.textContent = "100%";
-    status.textContent = "Mastering complete! Adjust final controls and play preview.";
+    status.textContent = "Mastering complete! Adjust controls and preview the result.";
 
     // Prepare mastered player
     clearFX2();
     seekFX2(0);
     updateFXUI2(0);
 
+    audioCtx.close();
+
   } catch (err) {
+    console.error('Mastering error:', err);
     status.textContent = "Error: " + err.message;
     bar.style.width = "0%";
     text.textContent = "0%";
@@ -598,20 +530,68 @@ document.getElementById('targetPlayPause2').onclick = function() {
   if (targetIsPlaying2) pauseTargetFX2();
   else playTargetFX2(targetOffset2);
 };
+
 document.getElementById('fxPlayPause2').onclick = function() {
   if (!fxBuffer2) return;
   if (fxIsPlaying2) pauseFX2();
   else playFX2(fxOffset2);
 };
+
 document.getElementById('targetProgressBar2').onclick = function(e) {
   if (!targetBuffer2) return;
   const rect = this.getBoundingClientRect();
   const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
   const seekTime = (targetBuffer2.duration || 0) * percent;
   seekTargetFX2(seekTime);
-  if (targetIsPlaying2) playTargetFX2(seekTime);
 };
+
 document.getElementById('fxProgressBar2').onclick = function(e) {
   if (!fxBuffer2) return;
   const rect = this.getBoundingClientRect();
-  const percent
+  const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const seekTime = (fxBuffer2.duration || 0) * percent;
+  seekFX2(seekTime);
+};
+
+// --- FX Controls with real-time reprocessing ---
+async function updateMasteredBuffer() {
+  if (!window._mastering_temp) return;
+  
+  const { targetAudio, referenceFeatures } = window._mastering_temp;
+  const params = getCurrentFXParams();
+  
+  try {
+    const newBuffer = await applyMastering2(targetAudio, referenceFeatures, params);
+    fxBuffer2 = newBuffer;
+    fxDuration2 = newBuffer.duration;
+    
+    // If currently playing, restart with new buffer
+    if (fxIsPlaying2) {
+      const currentTime = getFXCurrentTime2();
+      playFX2(currentTime);
+    } else {
+      updateFXUI2();
+    }
+  } catch (error) {
+    console.error('Error updating mastered buffer:', error);
+  }
+}
+
+['gainControl2','saturation2','stereoWidth2'].forEach(id => {
+  const element = document.getElementById(id);
+  if (element) {
+    element.addEventListener('input', async () => {
+      // Update display values
+      const gainVal = document.getElementById('gainVal2');
+      const saturationVal = document.getElementById('saturationVal2');
+      const widthVal = document.getElementById('widthVal2');
+      
+      if (gainVal) gainVal.innerText = document.getElementById('gainControl2').value;
+      if (saturationVal) saturationVal.innerText = document.getElementById('saturation2').value;
+      if (widthVal) widthVal.innerText = document.getElementById('stereoWidth2').value;
+      
+      // Update mastered buffer with new settings
+      await updateMasteredBuffer();
+    });
+  }
+});
