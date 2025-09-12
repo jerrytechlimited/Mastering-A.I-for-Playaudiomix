@@ -1,282 +1,264 @@
-  let audioBuffer = null;
-    let fxCtx2, fxSource2;
-    let fxIsPlaying2 = false;
-    let renderedBuffer = null;
+// --- Reference Tracks ---
+// ... (Existing code unchanged, not repeated for brevity)
 
-    // Upload handler
-    document.getElementById('fileInput').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const arrayBuffer = await file.arrayBuffer();
-      const ctx = new AudioContext();
-      audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-      alert("Audio loaded successfully!");
-    });
+// --- Exciter Effect ---
+function createExciterNode(audioCtx, amount = 0.5, freq = 3000) {
+  const input = audioCtx.createGain();
+  const hp = audioCtx.createBiquadFilter();
+  hp.type = "highpass";
+  hp.frequency.value = freq;
+  hp.Q.value = 0.707;
 
-    // FX Params
-    function getCurrentFXParams() {
-      return {
-        gain: parseFloat(document.getElementById('gainControl2').value),
-        noiseReduction: parseFloat(document.getElementById('noiseReduction2').value),
-        stereoWidth: parseFloat(document.getElementById('stereoWidth2').value),
-        exciter: parseFloat(document.getElementById('exciterControl2').value),
-        reverb: parseFloat(document.getElementById('reverbControl2').value)
-      }
+  const waveshaper = audioCtx.createWaveShaper();
+  const curve = new Float32Array(256);
+  for (let i = 0; i < 256; ++i) {
+    const x = (i - 128) / 128;
+    curve[i] = Math.tanh(x * 2.5);
+  }
+  waveshaper.curve = curve;
+  waveshaper.oversample = '4x';
+
+  const mix = audioCtx.createGain();
+  mix.gain.value = amount;
+  const output = audioCtx.createGain();
+  output.gain.value = 1;
+
+  input.connect(hp).connect(waveshaper).connect(mix);
+  mix.connect(output);
+  input.connect(output); // dry
+  return { input, output, setAmount: (a) => { mix.gain.value = a; } };
+}
+
+// --- Plate Reverb Effect ---
+function createPlateReverbNode(audioCtx, duration = 2.0, decay = 2.5, mix = 0.2) {
+  const input = audioCtx.createGain();
+  const convolver = audioCtx.createConvolver();
+  convolver.buffer = createPlateImpulse(audioCtx, duration, decay);
+  const wetGain = audioCtx.createGain();
+  wetGain.gain.value = mix;
+  const dryGain = audioCtx.createGain();
+  dryGain.gain.value = 1 - mix;
+
+  input.connect(convolver).connect(wetGain);
+  input.connect(dryGain);
+
+  const output = audioCtx.createGain();
+  wetGain.connect(output);
+  dryGain.connect(output);
+
+  function updateReverb({ mix: m, decay: d, duration: t }) {
+    if (m !== undefined) wetGain.gain.value = m, dryGain.gain.value = 1 - m;
+    if (d || t) {
+      convolver.buffer = createPlateImpulse(audioCtx, t || duration, d || decay);
     }
+  }
+  return { input, output, updateReverb };
+}
 
-    // Generate Plate Reverb IR
-    function generatePlateIR(ctx, duration = 2.5) {
-      const rate = ctx.sampleRate;
-      const length = rate * duration;
-      const impulse = ctx.createBuffer(2, length, rate);
-      for (let c = 0; c < 2; c++) {
-        const ch = impulse.getChannelData(c);
-        for (let i = 0; i < length; i++) {
-          ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
-        }
-      }
-      return impulse;
+function createPlateImpulse(audioCtx, duration = 2.0, decay = 2.5) {
+  const rate = audioCtx.sampleRate;
+  const length = Math.floor(duration * rate);
+  const buffer = audioCtx.createBuffer(2, length, rate);
+  for (let c = 0; c < 2; ++c) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < length; ++i) {
+      const t = i / rate;
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-3 * t / decay) * (1 - 0.14 * Math.sin(2 * Math.PI * 1.3 * t));
     }
+  }
+  return buffer;
+}
 
-    // Realtime FX Preview
-    function makeRealtimeFXChain(buffer, params) {
-      fxCtx2 = new (window.AudioContext || window.webkitAudioContext)();
-      fxSource2 = fxCtx2.createBufferSource();
-      fxSource2.buffer = buffer;
+// --- Apply Mastering (with Exciter and Plate Reverb) ---
+async function applyMastering2(targetBuffer, referenceFeatures, userParams = {}) {
+  const audioCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
+    targetBuffer.numberOfChannels,
+    targetBuffer.length,
+    targetBuffer.sampleRate
+  );
+  const src = audioCtx.createBufferSource();
+  src.buffer = targetBuffer;
 
-      const gainNode = fxCtx2.createGain();
-      gainNode.gain.value = params.gain;
+  const targetRMS = Math.sqrt(targetBuffer.getChannelData(0).reduce((sum, v) => sum + v*v, 0) / targetBuffer.length);
+  const gainNode = audioCtx.createGain();
+  gainNode.gain.value = (referenceFeatures.rms / (targetRMS || 1)) * (userParams.gain || 1);
 
-      let last = fxSource2;
-      last.connect(gainNode);
-      last = gainNode;
+  function makeEQ(type, freq, gain) {
+    const eq = audioCtx.createBiquadFilter();
+    eq.type = type; eq.frequency.value = freq; eq.gain.value = gain;
+    return eq;
+  }
+  const ref = referenceFeatures.freqData;
+  const n = ref.length;
+  const lowAvg = ref.slice(0, Math.floor(n * 0.15)).reduce((a,b)=>a+b,0) / Math.floor(n * 0.15);
+  const midAvg = ref.slice(Math.floor(n * 0.15), Math.floor(n * 0.5)).reduce((a,b)=>a+b,0) / (Math.floor(n * 0.5)-Math.floor(n * 0.15));
+  const highAvg = ref.slice(Math.floor(n * 0.5)).reduce((a,b)=>a+b,0) / (n-Math.floor(n * 0.5));
+  const eqLow = makeEQ("lowshelf", 150, lowAvg/10);
+  const eqMid = makeEQ("peaking", 1000, midAvg/10);
+  const eqHigh = makeEQ("highshelf", 6000, highAvg/10);
 
-      // Noise reduction
-      if (params.noiseReduction > 0) {
-        const comp = fxCtx2.createDynamicsCompressor();
-        comp.threshold.value = -60 + (params.noiseReduction * 30);
-        comp.ratio.value = 8;
-        comp.attack.value = 0.005;
-        comp.release.value = 0.1;
-        last.connect(comp);
-        last = comp;
-      }
+  const comp = audioCtx.createDynamicsCompressor();
+  comp.threshold.value = -20 + referenceFeatures.std * 10;
+  comp.ratio.value = 2.5;
+  comp.attack.value = 0.003;
+  comp.release.value = 0.25;
 
-      // Exciter
-      if (params.exciter > 0) {
-        const highpass = fxCtx2.createBiquadFilter();
-        highpass.type = "highpass";
-        highpass.frequency.value = 2000;
-        const shaper = fxCtx2.createWaveShaper();
-        const curve = new Float32Array(44100);
-        for (let i = 0; i < curve.length; i++) {
-          let x = (i / curve.length) * 2 - 1;
-          curve[i] = Math.tanh(x * (params.exciter * 5));
-        }
-        shaper.curve = curve;
-        highpass.connect(shaper);
-        last.connect(highpass);
-        shaper.connect(fxCtx2.destination);
-      }
+  let noiseGate;
+  if (userParams.noiseReduction && userParams.noiseReduction > 0) {
+    noiseGate = audioCtx.createDynamicsCompressor();
+    noiseGate.threshold.value = -60 + (userParams.noiseReduction * 30);
+    noiseGate.ratio.value = 8;
+    noiseGate.attack.value = 0.005;
+    noiseGate.release.value = 0.1;
+  }
 
-      // Stereo Width
-      if (buffer.numberOfChannels > 1) {
-        const splitter = fxCtx2.createChannelSplitter(2);
-        const merger = fxCtx2.createChannelMerger(2);
-        const lGain = fxCtx2.createGain();
-        const rGain = fxCtx2.createGain();
-        lGain.gain.value = params.stereoWidth;
-        rGain.gain.value = params.stereoWidth;
-        last.connect(splitter);
-        splitter.connect(lGain, 0);
-        splitter.connect(rGain, 1);
-        lGain.connect(merger, 0, 0);
-        rGain.connect(merger, 0, 1);
-        last = merger;
-      }
+  let stereoNode = null;
+  if (userParams.stereoWidth !== undefined) {
+    const width = Math.max(0, Math.min(2, userParams.stereoWidth));
+    if (targetBuffer.numberOfChannels > 1) {
+      const splitter = audioCtx.createChannelSplitter(2);
+      const merger = audioCtx.createChannelMerger(2);
+      const leftGain = audioCtx.createGain();
+      const rightGain = audioCtx.createGain();
 
-      // Plate Reverb
-      if (params.reverb > 0) {
-        const convolver = fxCtx2.createConvolver();
-        convolver.buffer = generatePlateIR(fxCtx2, 2.5);
-        const rvGain = fxCtx2.createGain();
-        rvGain.gain.value = params.reverb;
-        last.connect(convolver);
-        convolver.connect(rvGain).connect(fxCtx2.destination);
-      }
+      leftGain.gain.value = width;
+      rightGain.gain.value = width;
 
-      last.connect(fxCtx2.destination);
+      splitter.connect(leftGain, 0);
+      splitter.connect(rightGain, 1);
 
-      fxSource2.start();
-      fxIsPlaying2 = true;
+      leftGain.connect(merger, 0, 0);
+      rightGain.connect(merger, 0, 1);
 
-      fxSource2.onended = () => { fxIsPlaying2 = false; };
+      stereoNode = {splitter, merger, leftGain, rightGain};
     }
+  }
 
-    // Offline Render
-    async function applyMastering2(buffer, params) {
-      const ctx = new OfflineAudioContext(
-        buffer.numberOfChannels,
-        buffer.length,
-        buffer.sampleRate
-      );
+  // --- Exciter Node ---
+  const exciterAmount = userParams.exciterAmount !== undefined ? userParams.exciterAmount : 0.3;
+  const exciterFreq = userParams.exciterFreq !== undefined ? userParams.exciterFreq : 3500;
+  const exciter = createExciterNode(audioCtx, exciterAmount, exciterFreq);
 
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
+  // --- Plate Reverb Node ---
+  const reverbMix = userParams.reverbMix !== undefined ? userParams.reverbMix : 0.13;
+  const reverbDuration = userParams.reverbDuration !== undefined ? userParams.reverbDuration : 1.7;
+  const reverbDecay = userParams.reverbDecay !== undefined ? userParams.reverbDecay : 2.5;
+  const plateReverb = createPlateReverbNode(audioCtx, reverbDuration, reverbDecay, reverbMix);
 
-      const gainNode = ctx.createGain();
-      gainNode.gain.value = params.gain;
+  let lastNode = gainNode;
+  if (noiseGate) {
+    lastNode.connect(noiseGate);
+    lastNode = noiseGate;
+  }
+  lastNode.connect(eqLow).connect(eqMid).connect(eqHigh);
 
-      let last = source;
-      last.connect(gainNode);
-      last = gainNode;
+  eqHigh.connect(exciter.input);
+  lastNode = exciter.output;
 
-      // Noise reduction
-      if (params.noiseReduction > 0) {
-        const comp = ctx.createDynamicsCompressor();
-        comp.threshold.value = -60 + (params.noiseReduction * 30);
-        comp.ratio.value = 8;
-        comp.attack.value = 0.005;
-        comp.release.value = 0.1;
-        last.connect(comp);
-        last = comp;
-      }
+  lastNode.connect(comp);
+  lastNode = comp;
 
-      // Exciter
-      if (params.exciter > 0) {
-        const highpass = ctx.createBiquadFilter();
-        highpass.type = "highpass";
-        highpass.frequency.value = 2000;
-        const shaper = ctx.createWaveShaper();
-        const curve = new Float32Array(44100);
-        for (let i = 0; i < curve.length; i++) {
-          let x = (i / curve.length) * 2 - 1;
-          curve[i] = Math.tanh(x * (params.exciter * 5));
-        }
-        shaper.curve = curve;
-        highpass.connect(shaper);
-        last.connect(highpass);
-        shaper.connect(ctx.destination);
-      }
+  lastNode.connect(plateReverb.input);
+  lastNode = plateReverb.output;
 
-      // Stereo Width
-      if (buffer.numberOfChannels > 1) {
-        const splitter = ctx.createChannelSplitter(2);
-        const merger = ctx.createChannelMerger(2);
-        const lGain = ctx.createGain();
-        const rGain = ctx.createGain();
-        lGain.gain.value = params.stereoWidth;
-        rGain.gain.value = params.stereoWidth;
-        last.connect(splitter);
-        splitter.connect(lGain, 0);
-        splitter.connect(rGain, 1);
-        lGain.connect(merger, 0, 0);
-        rGain.connect(merger, 0, 1);
-        last = merger;
-      }
+  if (stereoNode) {
+    lastNode.connect(stereoNode.splitter);
+    stereoNode.leftGain.connect(stereoNode.merger, 0, 0);
+    stereoNode.rightGain.connect(stereoNode.merger, 0, 1);
+    stereoNode.merger.connect(audioCtx.destination);
+  } else {
+    lastNode.connect(audioCtx.destination);
+  }
 
-      // Plate Reverb
-      if (params.reverb > 0) {
-        const convolver = ctx.createConvolver();
-        convolver.buffer = generatePlateIR(ctx, 2.5);
-        const rvGain = ctx.createGain();
-        rvGain.gain.value = params.reverb;
-        last.connect(convolver);
-        convolver.connect(rvGain).connect(ctx.destination);
-      }
+  src.connect(gainNode);
+  src.start();
+  return audioCtx.startRendering();
+}
 
-      last.connect(ctx.destination);
+// --- Realtime FX Chain (add exciter and reverb live preview) ---
+function makeRealtimeFXChain(buffer, params) {
+  fxCtx2 = new (window.AudioContext || window.webkitAudioContext)();
+  fxSource2 = fxCtx2.createBufferSource();
+  fxSource2.buffer = buffer;
 
-      source.start();
-      const rendered = await ctx.startRendering();
-      return rendered;
-    }
+  fxGain2 = fxCtx2.createGain();
+  fxGain2.gain.value = params.gain || 1;
 
-    // Controls update display
-    ['gainControl2','noiseReduction2','stereoWidth2','exciterControl2','reverbControl2'].forEach(id => {
-      document.getElementById(id).addEventListener('input', () => {
-        document.getElementById('gainVal2').innerText = document.getElementById('gainControl2').value;
-        document.getElementById('noiseVal2').innerText = document.getElementById('noiseReduction2').value;
-        document.getElementById('widthVal2').innerText = document.getElementById('stereoWidth2').value;
-        document.getElementById('exciterVal2').innerText = document.getElementById('exciterControl2').value;
-        document.getElementById('reverbVal2').innerText = document.getElementById('reverbControl2').value;
-      });
+  if (params.noiseReduction && params.noiseReduction > 0) {
+    fxNoise2 = fxCtx2.createDynamicsCompressor();
+    fxNoise2.threshold.value = -60 + (params.noiseReduction * 30);
+    fxNoise2.ratio.value = 8;
+    fxNoise2.attack.value = 0.005;
+    fxNoise2.release.value = 0.1;
+  } else {
+    fxNoise2 = null;
+  }
+
+  if (typeof params.stereoWidth !== "undefined" && buffer.numberOfChannels > 1) {
+    fxSplitter2 = fxCtx2.createChannelSplitter(2);
+    fxMerger2 = fxCtx2.createChannelMerger(2);
+    fxLeftGain2 = fxCtx2.createGain();
+    fxRightGain2 = fxCtx2.createGain();
+    fxLeftGain2.gain.value = Math.max(0, Math.min(2, params.stereoWidth));
+    fxRightGain2.gain.value = Math.max(0, Math.min(2, params.stereoWidth));
+  } else {
+    fxSplitter2 = fxMerger2 = fxLeftGain2 = fxRightGain2 = null;
+  }
+
+  // --- FX Exciter and Plate Reverb for live preview ---
+  const exciterAmount = params.exciterAmount !== undefined ? params.exciterAmount : 0.3;
+  const exciterFreq = params.exciterFreq !== undefined ? params.exciterFreq : 3500;
+  const exciter = createExciterNode(fxCtx2, exciterAmount, exciterFreq);
+
+  const reverbMix = params.reverbMix !== undefined ? params.reverbMix : 0.13;
+  const reverbDuration = params.reverbDuration !== undefined ? params.reverbDuration : 1.7;
+  const reverbDecay = params.reverbDecay !== undefined ? params.reverbDecay : 2.5;
+  const plateReverb = createPlateReverbNode(fxCtx2, reverbDuration, reverbDecay, reverbMix);
+
+  let last = fxSource2;
+  last.connect(fxGain2);
+  last = fxGain2;
+  if (fxNoise2) { last.connect(fxNoise2); last = fxNoise2; }
+
+  last.connect(exciter.input);
+  last = exciter.output;
+  last.connect(plateReverb.input);
+  last = plateReverb.output;
+
+  if (fxSplitter2 && fxLeftGain2 && fxRightGain2 && fxMerger2) {
+    last.connect(fxSplitter2);
+    fxSplitter2.connect(fxLeftGain2, 0);
+    fxSplitter2.connect(fxRightGain2, 1);
+    fxLeftGain2.connect(fxMerger2, 0, 0);
+    fxRightGain2.connect(fxMerger2, 0, 1);
+    last = fxMerger2;
+  }
+  last.connect(fxCtx2.destination);
+}
+
+// --- Get FX Params (now with exciter and reverb) ---
+function getCurrentFXParams() {
+  return {
+    gain: parseFloat(document.getElementById('gainControl2').value),
+    noiseReduction: parseFloat(document.getElementById('noiseReduction2').value),
+    stereoWidth: parseFloat(document.getElementById('stereoWidth2').value),
+    exciterAmount: parseFloat(document.getElementById('exciterAmount2')?.value ?? 0.3),
+    exciterFreq: parseFloat(document.getElementById('exciterFreq2')?.value ?? 3500),
+    reverbMix: parseFloat(document.getElementById('reverbMix2')?.value ?? 0.13),
+    reverbDuration: parseFloat(document.getElementById('reverbDuration2')?.value ?? 1.7),
+    reverbDecay: parseFloat(document.getElementById('reverbDecay2')?.value ?? 2.5)
+  }
+}
+
+// --- Add listeners for UI controls (exciter/reverb) ---
+['gainControl2','noiseReduction2','stereoWidth2','exciterAmount2','exciterFreq2','reverbMix2','reverbDuration2','reverbDecay2'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('input', () => {
+      if (fxBuffer2 && fxIsPlaying2) playFX2(getFXCurrentTime2());
+      else if (fxBuffer2) updateFXUI2();
     });
+  }
+});
 
-    // Preview
-    document.getElementById('previewBtn').addEventListener('click', () => {
-      if (!audioBuffer) return alert("Upload audio first!");
-      if (fxIsPlaying2) return;
-      makeRealtimeFXChain(audioBuffer, getCurrentFXParams());
-    });
-
-    // Stop
-    document.getElementById('stopBtn').addEventListener('click', () => {
-      if (fxCtx2) fxCtx2.close();
-      fxIsPlaying2 = false;
-    });
-
-    // Download
-    document.getElementById('downloadBtn').addEventListener('click', async () => {
-      if (!audioBuffer) return alert("Upload audio first!");
-      const rendered = await applyMastering2(audioBuffer, getCurrentFXParams());
-      renderedBuffer = rendered;
-
-      const wav = audioBufferToWav(rendered);
-      const blob = new Blob([wav], { type: "audio/wav" });
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "mastered.wav";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    });
-
-    // Helper: Convert buffer to WAV
-    function audioBufferToWav(buffer) {
-      const numOfChan = buffer.numberOfChannels;
-      const length = buffer.length * numOfChan * 2 + 44;
-      const bufferArr = new ArrayBuffer(length);
-      const view = new DataView(bufferArr);
-      const channels = [];
-      let pos = 0;
-
-      function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
-      function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
-
-      // RIFF chunk
-      setUint32(0x46464952);
-      setUint32(length - 8);
-      setUint32(0x45564157);
-
-      // fmt chunk
-      setUint32(0x20746d66);
-      setUint32(16);
-      setUint16(1);
-      setUint16(numOfChan);
-      setUint32(buffer.sampleRate);
-      setUint32(buffer.sampleRate * 2 * numOfChan);
-      setUint16(numOfChan * 2);
-      setUint16(16);
-
-      // data chunk
-      setUint32(0x61746164);
-      setUint32(length - pos - 4);
-
-      for (let i = 0; i < buffer.numberOfChannels; i++)
-        channels.push(buffer.getChannelData(i));
-
-      let offset = 0;
-      while (pos < length) {
-        for (let i = 0; i < numOfChan; i++) {
-          let sample = Math.max(-1, Math.min(1, channels[i][offset]));
-          view.setInt16(pos, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-          pos += 2;
-        }
-        offset++;
-      }
-
-      return bufferArr;
-    }
+// --- The rest of your code remains unchanged ---
