@@ -450,10 +450,72 @@ document.getElementById('processBtn2').onclick = async () => {
         sampleRate: buffer.sampleRate,
         channelData: Array.from({length: buffer.numberOfChannels}, (_, i) => buffer.getChannelData(i))
       });
-      const blob = new Blob([wavData], {type: "audio/wav"});
-      const url = URL.createObjectURL(blob);
-      downloadLink.href = url;
+// Simulated mastered audio blob (replace this with your generated blob logic)
+    let masteredBlob = null;
+    function generateMasteredAudio() {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          const dummyData = new Uint8Array([82,73,70,70]); // fake RIFF header
+          masteredBlob = new Blob([dummyData], {type:"audio/wav"});
+          resolve(masteredBlob);
+        }, 5000); // simulate 5s render delay
+      });
     }
+
+    
+    const modal = document.getElementById("agreementModal");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const agreeBtn = document.getElementById("agreeBtn");
+    const declineBtn = document.getElementById("declineBtn");
+    const statusMsg = document.getElementById("statusMsg");
+
+    // Show modal when download button clicked
+    downloadBtn.addEventListener("click", () => {
+      modal.style.display = "flex";
+    });
+
+    declineBtn.addEventListener("click", () => {
+      modal.style.display = "none";
+    });
+
+    agreeBtn.addEventListener("click", () => {
+      modal.style.display = "none";
+      startPaystackPayment();
+    });
+
+    function startPaystackPayment() {
+      let handler = PaystackPop.setup({
+        key: "pk_test_7051b3225597c778f3523710e74ac5da75022fe2", // replace with your Paystack public key
+        email: "customer@email.com",
+        amount: 2000 * 100, // amount in kobo (₦2000)
+        currency: "NGN",
+        callback: function(response){
+          statusMsg.textContent = "✅ Payment successful! Preparing your mastered audio...";
+          triggerAutoDownload();
+        },
+        onClose: function(){
+          statusMsg.textContent = "❌ Payment was cancelled.";
+        }
+      });
+      handler.openIframe();
+    }
+
+    async function triggerAutoDownload() {
+      if (!masteredBlob) {
+        statusMsg.textContent = "⏳ Please wait, mastering still in progress...";
+        await generateMasteredAudio(); // wait until blob ready
+      }
+      const url = URL.createObjectURL(masteredBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "Mastered_Audio.wav";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      statusMsg.textContent = "🎉 Your mastered track has been downloaded!";
+    }
+    }
+   
 
     // UI Show
     document.getElementById('outputPlayerSection2').style.display = "";
