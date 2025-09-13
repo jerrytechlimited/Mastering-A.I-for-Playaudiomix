@@ -443,74 +443,74 @@ document.getElementById('processBtn2').onclick = async () => {
 
     // Download link prepares WAV with current FX settings
     const downloadLink = document.getElementById('downloadLink2');
-   // ---------- CONFIG ----------
-const PAYSTACK_PUBLIC_KEY = "pk_test_7051b3225597c778f3523710e74ac5da75022fe2"; // <-- replace
-const amountInKobo = 10000; // e.g. 10000 kobo = NGN100. Adjust as needed.
+ // ---------- CONFIG ----------
+const PAYSTACK_PUBLIC_KEY = "pk_test_7051b3225597c778f3523710e74ac5da75022fe2"; 
+const amountInKobo = 10000; // NGN100
 
-// ---------- Helpers ----------
+// ---------- UI helpers ----------
 function showToast(msg, ms = 3000) {
   const t = document.getElementById('downloadToast');
-  if (!t) return;
   t.textContent = msg;
-  t.style.display = 'block';
+  t.classList.remove('hidden');
   clearTimeout(t._timeout);
-  t._timeout = setTimeout(() => t.style.display = 'none', ms);
+  t._timeout = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
 function showTosModal() {
-  const m = document.getElementById('tosModal');
-  m.style.display = 'flex';
+  document.getElementById('tosModal').classList.remove('hidden');
 }
 function hideTosModal() {
-  const m = document.getElementById('tosModal');
-  m.style.display = 'none';
+  document.getElementById('tosModal').classList.add('hidden');
+}
+function showStatus(msg) {
+  const box = document.getElementById('tosStatus');
+  const text = document.getElementById('tosStatusText');
+  text.textContent = msg;
+  box.classList.remove('hidden');
+}
+function hideStatus() {
+  document.getElementById('tosStatus').classList.add('hidden');
 }
 
-// ---------- Blob preparation (memoized Promise) ----------
-/*
-  Creates and returns a Promise that resolves with an audio/wav Blob.
-  The Promise is memoized in window._downloadBlobPromise to avoid re-encoding.
-*/
+// ---------- Blob preparation ----------
 async function prepareMasteredBlob(paramsOverride = null) {
-  // If a blob is already prepared, return it immediately
+  // ⚡ Re-encode if FX changed: clear old blob
+  if (window._fxDirty) {
+    window._downloadBlob = null;
+    window._fxDirty = false;
+  }
+
   if (window._downloadBlob) return window._downloadBlob;
-  // If encoding is already in progress, return the existing promise
   if (window._downloadBlobPromise) return window._downloadBlobPromise;
 
-  // Use the last processed targetAudio + referenceFeatures stored earlier
-  if (!window._mastering_temp || !window._mastering_temp.targetAudio || !window._mastering_temp.referenceFeatures) {
-    return Promise.reject(new Error("No processed session found. Please process (master) the track first."));
+  if (!window._mastering_temp || !window._mastering_temp.targetAudio) {
+    return Promise.reject(new Error("No mastered session available. Please process first."));
   }
 
   const targetAudio = window._mastering_temp.targetAudio;
   const referenceFeatures = window._mastering_temp.referenceFeatures;
-
-  // prefer current UI params unless a specific override provided
   const fxParams = paramsOverride || getCurrentFXParams();
 
   window._downloadBlobPromise = (async () => {
     try {
-      // Inform user
-      showToast("Preparing mastered file — this may take a few seconds...");
-      // Run full rendering to get final buffer
+      showStatus("Rendering mastered file...");
+      showToast("Preparing mastered file...");
       const finalBuffer = await applyMastering2(targetAudio, referenceFeatures, fxParams);
-      // Encode to WAV
       const wavData = await WavEncoder2.encode({
         sampleRate: finalBuffer.sampleRate,
         channelData: Array.from({length: finalBuffer.numberOfChannels}, (_, i) => finalBuffer.getChannelData(i))
       });
       const blob = new Blob([wavData], { type: "audio/wav" });
-      // memorize blob & object URL
       window._downloadBlob = blob;
       window._downloadObjectUrl = URL.createObjectURL(blob);
-      showToast("Mastered file ready — starting download...");
+      showToast("File ready!");
       return blob;
     } catch (err) {
-      console.error("Error preparing blob:", err);
+      console.error(err);
       showToast("Error preparing file: " + err.message, 6000);
       throw err;
     } finally {
-      // clear the promise so future calls can re-run if needed
+      hideStatus();
       window._downloadBlobPromise = null;
     }
   })();
@@ -518,8 +518,7 @@ async function prepareMasteredBlob(paramsOverride = null) {
   return window._downloadBlobPromise;
 }
 
-// ---------- Trigger automatic download ----------
-function triggerDownloadFromBlob(blob, filename = "mastered.wav") {
+function triggerDownload(blob, filename = "mastered.wav") {
   const url = window._downloadObjectUrl || URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -527,85 +526,69 @@ function triggerDownloadFromBlob(blob, filename = "mastered.wav") {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  // keep objectUrl cached in window._downloadObjectUrl to avoid multiple creates
   window._downloadObjectUrl = url;
 }
 
-// ---------- Payment integration (Paystack) ----------
-function startPaystackPayment(email = "customer@example.com", metadata = {}) {
+// ---------- Paystack ----------
+function startPaystackPayment(email = "customer@example.com") {
   return new Promise((resolve, reject) => {
     if (!window.PaystackPop) {
-      reject(new Error("Paystack script not loaded. Include https://js.paystack.co/v1/inline.js"));
+      reject(new Error("Paystack script not loaded."));
       return;
     }
     const handler = window.PaystackPop.setup({
       key: PAYSTACK_PUBLIC_KEY,
-      email: email,
+      email,
       amount: amountInKobo,
-      metadata: metadata,
-      onClose: function() {
-        reject(new Error("Payment popup closed."));
-      },
-      callback: function(response) {
-        // response.reference available. You should verify server-side for full security.
-        // For demo we resolve here and continue download
-        resolve(response);
-      }
+      onClose: () => reject(new Error("Payment closed.")),
+      callback: (res) => resolve(res)
     });
     handler.openIframe();
   });
 }
 
-// ---------- Download flow handler ----------
-const downloadAnchor = document.getElementById('downloadLink2');
-if (downloadAnchor) {
-  downloadAnchor.addEventListener('click', function(e) {
-    e.preventDefault();
-    // Show TOS modal first
-    showTosModal();
-  });
-}
+// ---------- Flow ----------
+document.getElementById('downloadLink2')?.addEventListener('click', e => {
+  e.preventDefault();
+  showTosModal();
+});
 
-// modal buttons
 document.getElementById('tosCancelBtn').addEventListener('click', () => {
   hideTosModal();
-  showToast("Download cancelled.");
+  hideStatus();
+  showToast("Download cancelled");
 });
+
 document.getElementById('tosAgreeBtn').addEventListener('click', async () => {
-  // Optionally disable the Agree button and show status
-  const statusEl = document.getElementById('tosStatus');
-  const agreeBtn = document.getElementById('tosAgreeBtn');
-  agreeBtn.disabled = true;
-  statusEl.textContent = "Opening payment...";
+  const btn = document.getElementById('tosAgreeBtn');
+  btn.disabled = true;
   try {
-    // Optionally collect customer email from your UI; used here as placeholder.
-    const email = (document.getElementById('customerEmail') && document.getElementById('customerEmail').value) || "customer@example.com";
-
-    // START payment
-    const payResponse = await startPaystackPayment(email, { product: "track_master", note: "Mastered track purchase" });
-
-    // On success: hide modal and prepare + download file
+    showStatus("Opening Paystack...");
+    const email = "customer@example.com"; // ⚡ You may fetch from UI input
+    const payRes = await startPaystackPayment(email);
     hideTosModal();
-    statusEl.textContent = "";
-    showToast("Payment successful. Preparing download...");
+    showToast("Payment successful! Preparing file...");
 
-    // prepare blob (if not ready, prepareMasteredBlob will run encoding and resolve when done)
-    // we also show a countdown/wait if needed
     const blob = await prepareMasteredBlob();
-    // start download automatically
-    triggerDownloadFromBlob(blob, "mastered.wav");
-
-    // Done - optionally show server verification or receipt step here
+    triggerDownload(blob, "mastered.wav");
     showToast("Download started. Thank you!");
   } catch (err) {
-    console.error("Payment/download flow error:", err);
-    const statusEl = document.getElementById('tosStatus');
-    statusEl.textContent = "Error: " + err.message;
+    showStatus("Error: " + err.message);
     showToast(err.message, 5000);
   } finally {
-    document.getElementById('tosAgreeBtn').disabled = false;
+    btn.disabled = false;
   }
 });
+
+// ---------- ⚡ Mark FX settings as dirty ----------
+function markFXDirty() {
+  window._fxDirty = true;
+}
+// Example: hook this into your FX UI sliders / dropdowns
+document.querySelectorAll('.fx-control').forEach(ctrl => {
+  ctrl.addEventListener('input', markFXDirty);
+});
+
 
 
     // UI Show
