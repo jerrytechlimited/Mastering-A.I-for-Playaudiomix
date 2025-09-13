@@ -444,7 +444,7 @@ document.getElementById('processBtn2').onclick = async () => {
     // Download link prepares WAV with current FX settings
     const downloadLink = document.getElementById('downloadLink2');
    // ---------- CONFIG ----------
-const PAYSTACK_PUBLIC_KEY = "YOUR_PAYSTACK_PUBLIC_KEY"; // <-- replace
+const PAYSTACK_PUBLIC_KEY = "pk_test_7051b3225597c778f3523710e74ac5da75022fe2"; // <-- replace
 const amountInKobo = 10000; // e.g. 10000 kobo = NGN100. Adjust as needed.
 
 // ---------- Helpers ----------
