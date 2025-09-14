@@ -510,8 +510,8 @@ async function prepareMasteredBlob(paramsOverride = null) {
       showToast("Error preparing file: " + err.message, 6000);
       throw err;
     } finally {
-      hideStatus();
-      window._downloadBlobPromise = null;
+     
+  return window._downloadBlobPromise;
     }
   })();
 
@@ -527,6 +527,21 @@ function triggerDownload(blob, filename = "mastered.wav") {
   a.click();
   a.remove();
   window._downloadObjectUrl = url;
+
+  function triggerDownload(blob, filename = "mastered.wav") {
+  const url = window._downloadObjectUrl || URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window._downloadObjectUrl = url;
+
+  // ✅ Now hide the status when the download starts
+  hideStatus();
+}
+
 }
 
 // ---------- Paystack ----------
@@ -683,45 +698,7 @@ function createExciterNode(audioCtx, amount = 0.5, freq = 3000) {
   return { input, output, setAmount: (a) => { mix.gain.value = a; } };
 }
 
-// --- Plate Reverb Effect ---
-function createPlateReverbNode(audioCtx, duration = 2.0, decay = 2.5, mix = 0.2) {
-  const input = audioCtx.createGain();
-  const convolver = audioCtx.createConvolver();
-  convolver.buffer = createPlateImpulse(audioCtx, duration, decay);
-  const wetGain = audioCtx.createGain();
-  wetGain.gain.value = mix;
-  const dryGain = audioCtx.createGain();
-  dryGain.gain.value = 1 - mix;
 
-  input.connect(convolver).connect(wetGain);
-  input.connect(dryGain);
-
-  const output = audioCtx.createGain();
-  wetGain.connect(output);
-  dryGain.connect(output);
-
-  function updateReverb({ mix: m, decay: d, duration: t }) {
-    if (m !== undefined) wetGain.gain.value = m, dryGain.gain.value = 1 - m;
-    if (d || t) {
-      convolver.buffer = createPlateImpulse(audioCtx, t || duration, d || decay);
-    }
-  }
-  return { input, output, updateReverb };
-}
-
-function createPlateImpulse(audioCtx, duration = 2.0, decay = 2.5) {
-  const rate = audioCtx.sampleRate;
-  const length = Math.floor(duration * rate);
-  const buffer = audioCtx.createBuffer(2, length, rate);
-  for (let c = 0; c < 2; ++c) {
-    const data = buffer.getChannelData(c);
-    for (let i = 0; i < length; ++i) {
-      const t = i / rate;
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-3 * t / decay) * (1 - 0.14 * Math.sin(2 * Math.PI * 1.3 * t));
-    }
-  }
-  return buffer;
-}
 
 // --- Apply Mastering (with Exciter and Plate Reverb) ---
 async function applyMastering2(targetBuffer, referenceFeatures, userParams = {}) {
