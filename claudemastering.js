@@ -770,11 +770,7 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   const exciterFreq = userParams.exciterFreq !== undefined ? userParams.exciterFreq : 3500;
   const exciter = createExciterNode(audioCtx, exciterAmount, exciterFreq);
 
-  // --- Plate Reverb Node ---
-  const reverbMix = userParams.reverbMix !== undefined ? userParams.reverbMix : 0.13;
-  const reverbDuration = userParams.reverbDuration !== undefined ? userParams.reverbDuration : 1.7;
-  const reverbDecay = userParams.reverbDecay !== undefined ? userParams.reverbDecay : 2.5;
-  const plateReverb = createPlateReverbNode(audioCtx, reverbDuration, reverbDecay, reverbMix);
+
 
   let lastNode = gainNode;
   if (noiseGate) {
@@ -841,10 +837,8 @@ function makeRealtimeFXChain(buffer, params) {
   const exciterFreq = params.exciterFreq !== undefined ? params.exciterFreq : 3500;
   const exciter = createExciterNode(fxCtx2, exciterAmount, exciterFreq);
 
-  const reverbMix = params.reverbMix !== undefined ? params.reverbMix : 0.13;
-  const reverbDuration = params.reverbDuration !== undefined ? params.reverbDuration : 1.7;
-  const reverbDecay = params.reverbDecay !== undefined ? params.reverbDecay : 2.5;
-  const plateReverb = createPlateReverbNode(fxCtx2, reverbDuration, reverbDecay, reverbMix);
+
+
 
   let last = fxSource2;
   last.connect(fxGain2);
