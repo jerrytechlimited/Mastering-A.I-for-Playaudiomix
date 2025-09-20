@@ -41,7 +41,6 @@ function computeFeatures2(audioBuffer) {
   }
   const mean = channelData.reduce((s, v) => s + v, 0) / length;
   const std = Math.sqrt(channelData.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / length);
-
   // FFT
   const fftSize = 8192;
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -51,7 +50,6 @@ function computeFeatures2(audioBuffer) {
   analyser.fftSize = fftSize;
   src.connect(analyser);
   src.start();
-
   return new Promise(resolve => {
     setTimeout(() => {
       const freqData = new Float32Array(analyser.frequencyBinCount);
@@ -71,15 +69,13 @@ function computeFeatures2(audioBuffer) {
 }
 
 const WavEncoder2 = {
-  encode({ sampleRate, channelData }) {
+  encode({sampleRate, channelData}) {
     const numChannels = channelData.length;
     const numSamples = channelData[0].length;
     const buffer = new ArrayBuffer(44 + numSamples * numChannels * 2);
     const view = new DataView(buffer);
 
-    function writeString(v, offset, s) {
-      for (let i = 0; i < s.length; ++i) v.setUint8(offset + i, s.charCodeAt(i));
-    }
+    function writeString(v, offset, s) { for (let i=0; i<s.length; ++i) v.setUint8(offset+i, s.charCodeAt(i)); }
     writeString(view, 0, "RIFF");
     view.setUint32(4, 36 + numSamples * numChannels * 2, true);
     writeString(view, 8, "WAVE");
@@ -93,10 +89,9 @@ const WavEncoder2 = {
     view.setUint16(34, 16, true);
     writeString(view, 36, "data");
     view.setUint32(40, numSamples * numChannels * 2, true);
-
     let offset = 44;
-    for (let i = 0; i < numSamples; ++i) {
-      for (let c = 0; c < numChannels; ++c) {
+    for (let i=0; i<numSamples; ++i) {
+      for (let c=0; c<numChannels; ++c) {
         let sample = Math.max(-1, Math.min(1, channelData[c][i]));
         view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
         offset += 2;
@@ -106,7 +101,6 @@ const WavEncoder2 = {
   }
 };
 
-// ---------- Mastering Pipeline ----------
 async function applyMastering2(targetBuffer, referenceFeatures, userParams = {}) {
   const audioCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
     targetBuffer.numberOfChannels,
@@ -116,12 +110,10 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   const src = audioCtx.createBufferSource();
   src.buffer = targetBuffer;
 
-  // Gain for RMS normalization + user gain
   const targetRMS = Math.sqrt(targetBuffer.getChannelData(0).reduce((sum, v) => sum + v*v, 0) / targetBuffer.length);
   const gainNode = audioCtx.createGain();
   gainNode.gain.value = (referenceFeatures.rms / (targetRMS || 1)) * (userParams.gain || 1);
 
-  // Multi-band EQ
   function makeEQ(type, freq, gain) {
     const eq = audioCtx.createBiquadFilter();
     eq.type = type; eq.frequency.value = freq; eq.gain.value = gain;
@@ -136,36 +128,12 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   const eqMid = makeEQ("peaking", 1000, midAvg/10);
   const eqHigh = makeEQ("highshelf", 6000, highAvg/10);
 
-  // Exciter
-  let exciter = null;
-  if (userParams.exciter && userParams.exciter > 0) {
-    exciter = audioCtx.createWaveShaper();
-    const amount = Math.min(1, Math.max(0, userParams.exciter));
-    const curve = new Float32Array(44100);
-    for (let i = 0; i < 44100; i++) {
-      const x = (i / 44100) * 2 - 1;
-      curve[i] = Math.tanh(x * (1 + amount * 10));
-    }
-    exciter.curve = curve;
-    exciter.oversample = "4x";
-
-    const exciterEQ = audioCtx.createBiquadFilter();
-    exciterEQ.type = "highshelf";
-    exciterEQ.frequency.value = 3000;
-    exciterEQ.gain.value = amount * 6;
-
-    exciter.connect(exciterEQ);
-    exciter = exciterEQ;
-  }
-
-  // Compressor
   const comp = audioCtx.createDynamicsCompressor();
   comp.threshold.value = -20 + referenceFeatures.std * 10;
   comp.ratio.value = 2.5;
   comp.attack.value = 0.003;
   comp.release.value = 0.25;
 
-  // Noise gate
   let noiseGate;
   if (userParams.noiseReduction && userParams.noiseReduction > 0) {
     noiseGate = audioCtx.createDynamicsCompressor();
@@ -175,7 +143,6 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     noiseGate.release.value = 0.1;
   }
 
-  // Stereo width
   let stereoNode = null;
   if (userParams.stereoWidth !== undefined) {
     const width = Math.max(0, Math.min(2, userParams.stereoWidth));
@@ -184,22 +151,26 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
       const merger = audioCtx.createChannelMerger(2);
       const leftGain = audioCtx.createGain();
       const rightGain = audioCtx.createGain();
+
       leftGain.gain.value = width;
       rightGain.gain.value = width;
+
       splitter.connect(leftGain, 0);
       splitter.connect(rightGain, 1);
+
       leftGain.connect(merger, 0, 0);
       rightGain.connect(merger, 0, 1);
+
       stereoNode = {splitter, merger, leftGain, rightGain};
     }
   }
 
-  // Connection chain
   let lastNode = gainNode;
-  if (noiseGate) { lastNode.connect(noiseGate); lastNode = noiseGate; }
-  lastNode.connect(eqLow).connect(eqMid).connect(eqHigh);
-  if (exciter) { lastNode.connect(exciter); lastNode = exciter; }
-  lastNode.connect(comp);
+  if (noiseGate) {
+    lastNode.connect(noiseGate);
+    lastNode = noiseGate;
+  }
+  lastNode.connect(eqLow).connect(eqMid).connect(eqHigh).connect(comp);
 
   if (stereoNode) {
     comp.connect(stereoNode.splitter);
@@ -215,9 +186,86 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   return audioCtx.startRendering();
 }
 
-// ---------- Realtime FX Player ----------
-// (same structure as your original but includes exciter in makeRealtimeFXChain)
+// --- Target player: NO FX ---
+let targetCtx2 = null, targetSource2 = null;
+let targetBuffer2 = null, targetIsPlaying2 = false, targetStartTime2 = 0, targetOffset2 = 0, targetDuration2 = 0, targetAnimFrame2 = null;
+function clearTargetFX2() {
+  if (targetSource2) { try { targetSource2.stop(); } catch{} }
+  if (targetCtx2) { try { targetCtx2.close(); } catch{} }
+  targetCtx2 = targetSource2 = null;
+  targetIsPlaying2 = false;
+  targetStartTime2 = 0;
+  targetDuration2 = 0;
+  if (targetAnimFrame2) cancelAnimationFrame(targetAnimFrame2);
+  targetAnimFrame2 = null;
+}
+function playTargetFX2(startAt = 0) {
+  if (!targetBuffer2) return;
+  pauseFX2(true);
+  clearTargetFX2();
+  targetCtx2 = new (window.AudioContext || window.webkitAudioContext)();
+  targetSource2 = targetCtx2.createBufferSource();
+  targetSource2.buffer = targetBuffer2;
+  targetIsPlaying2 = true;
+  targetOffset2 = startAt || 0;
+  targetDuration2 = targetBuffer2.duration;
+  targetSource2.connect(targetCtx2.destination);
+  targetSource2.start(0, targetOffset2);
+  targetStartTime2 = targetCtx2.currentTime;
+  document.getElementById('targetPlayPause2').textContent = "⏸";
+  updateTargetUI2();
 
+  targetSource2.onended = () => {
+    targetIsPlaying2 = false;
+    document.getElementById('targetPlayPause2').textContent = "▶";
+    cancelAnimationFrame(targetAnimFrame2);
+    targetAnimFrame2 = null;
+  };
+}
+function pauseTargetFX2(silent) {
+  if (!targetIsPlaying2) return;
+  if (targetSource2) {
+    try { targetSource2.stop(); } catch {}
+  }
+  targetOffset2 = getTargetCurrentTime2();
+  targetIsPlaying2 = false;
+  document.getElementById('targetPlayPause2').textContent = "▶";
+  cancelAnimationFrame(targetAnimFrame2);
+  targetAnimFrame2 = null;
+  if (!silent) pauseFX2(true);
+}
+function seekTargetFX2(time) {
+  targetOffset2 = time;
+  if (targetIsPlaying2) playTargetFX2(time);
+  else updateTargetUI2(time);
+}
+function getTargetCurrentTime2() {
+  if (!targetIsPlaying2) return targetOffset2;
+  return (targetCtx2.currentTime - targetStartTime2) + targetOffset2;
+}
+function updateTargetUI2(forceTime) {
+  const duration = targetDuration2 || (targetBuffer2 && targetBuffer2.duration) || 0;
+  const current = typeof forceTime === "number" ? forceTime : getTargetCurrentTime2();
+  document.getElementById('targetTime2').textContent =
+    `${formatTime(current)} / ${formatTime(duration)}`;
+  let percent = duration ? Math.min(100, (current / duration) * 100) : 0;
+  document.getElementById('targetProgressFill2').style.width = percent + "%";
+  if (targetIsPlaying2) targetAnimFrame2 = requestAnimationFrame(updateTargetUI2);
+}
+
+// --- Mastered output player: FX applied ---
+let fxCtx2 = null, fxSource2 = null, fxGain2 = null, fxNoise2 = null, fxSplitter2 = null, fxLeftGain2 = null, fxRightGain2 = null, fxMerger2 = null;
+let fxBuffer2 = null, fxIsPlaying2 = false, fxStartTime2 = 0, fxOffset2 = 0, fxDuration2 = 0, fxAnimFrame2 = null;
+function clearFX2() {
+  if (fxSource2) { try { fxSource2.stop(); } catch{} }
+  if (fxCtx2) { try { fxCtx2.close(); } catch{} }
+  fxCtx2 = fxSource2 = fxGain2 = fxNoise2 = fxSplitter2 = fxLeftGain2 = fxRightGain2 = fxMerger2 = null;
+  fxIsPlaying2 = false;
+  fxStartTime2 = 0;
+  fxDuration2 = 0;
+  if (fxAnimFrame2) cancelAnimationFrame(fxAnimFrame2);
+  fxAnimFrame2 = null;
+}
 function makeRealtimeFXChain(buffer, params) {
   fxCtx2 = new (window.AudioContext || window.webkitAudioContext)();
   fxSource2 = fxCtx2.createBufferSource();
@@ -226,7 +274,6 @@ function makeRealtimeFXChain(buffer, params) {
   fxGain2 = fxCtx2.createGain();
   fxGain2.gain.value = params.gain || 1;
 
-  // Noise Reduction
   if (params.noiseReduction && params.noiseReduction > 0) {
     fxNoise2 = fxCtx2.createDynamicsCompressor();
     fxNoise2.threshold.value = -60 + (params.noiseReduction * 30);
@@ -237,29 +284,6 @@ function makeRealtimeFXChain(buffer, params) {
     fxNoise2 = null;
   }
 
-  // Exciter
-  let fxExciter = null;
-  if (params.exciter && params.exciter > 0) {
-    fxExciter = fxCtx2.createWaveShaper();
-    const amount = Math.min(1, Math.max(0, params.exciter));
-    const curve = new Float32Array(44100);
-    for (let i = 0; i < 44100; i++) {
-      const x = (i / 44100) * 2 - 1;
-      curve[i] = Math.tanh(x * (1 + amount * 10));
-    }
-    fxExciter.curve = curve;
-    fxExciter.oversample = "4x";
-
-    const fxExciterEQ = fxCtx2.createBiquadFilter();
-    fxExciterEQ.type = "highshelf";
-    fxExciterEQ.frequency.value = 3000;
-    fxExciterEQ.gain.value = amount * 6;
-
-    fxExciter.connect(fxExciterEQ);
-    fxExciter = fxExciterEQ;
-  }
-
-  // Stereo Width
   if (typeof params.stereoWidth !== "undefined" && buffer.numberOfChannels > 1) {
     fxSplitter2 = fxCtx2.createChannelSplitter(2);
     fxMerger2 = fxCtx2.createChannelMerger(2);
@@ -272,9 +296,9 @@ function makeRealtimeFXChain(buffer, params) {
   }
 
   let last = fxSource2;
-  last.connect(fxGain2); last = fxGain2;
+  last.connect(fxGain2);
+  last = fxGain2;
   if (fxNoise2) { last.connect(fxNoise2); last = fxNoise2; }
-  if (fxExciter) { last.connect(fxExciter); last = fxExciter; }
   if (fxSplitter2 && fxLeftGain2 && fxRightGain2 && fxMerger2) {
     last.connect(fxSplitter2);
     fxSplitter2.connect(fxLeftGain2, 0);
@@ -285,31 +309,333 @@ function makeRealtimeFXChain(buffer, params) {
   }
   last.connect(fxCtx2.destination);
 }
+function playFX2(startAt = 0) {
+  if (!fxBuffer2) return;
+  pauseTargetFX2(true);
+  clearFX2();
+  const params = getCurrentFXParams();
+  makeRealtimeFXChain(fxBuffer2, params);
+  fxIsPlaying2 = true;
+  fxOffset2 = startAt || 0;
+  fxDuration2 = fxBuffer2.duration;
+  fxSource2.start(0, fxOffset2);
+  fxStartTime2 = fxCtx2.currentTime;
+  document.getElementById('fxPlayPause2').textContent = "⏸";
+  updateFXUI2();
 
-// ---------- Utilities ----------
+  fxSource2.onended = () => {
+    fxIsPlaying2 = false;
+    document.getElementById('fxPlayPause2').textContent = "▶";
+    cancelAnimationFrame(fxAnimFrame2);
+    fxAnimFrame2 = null;
+  };
+}
+function pauseFX2(silent) {
+  if (!fxIsPlaying2) return;
+  if (fxSource2) {
+    try { fxSource2.stop(); } catch {}
+  }
+  fxOffset2 = getFXCurrentTime2();
+  fxIsPlaying2 = false;
+  document.getElementById('fxPlayPause2').textContent = "▶";
+  cancelAnimationFrame(fxAnimFrame2);
+  fxAnimFrame2 = null;
+  if (!silent) pauseTargetFX2(true);
+}
+function seekFX2(time) {
+  fxOffset2 = time;
+  if (fxIsPlaying2) playFX2(time);
+  else updateFXUI2(time);
+}
+function getFXCurrentTime2() {
+  if (!fxIsPlaying2) return fxOffset2;
+  return (fxCtx2.currentTime - fxStartTime2) + fxOffset2;
+}
+function updateFXUI2(forceTime) {
+  const duration = fxDuration2 || (fxBuffer2 && fxBuffer2.duration) || 0;
+  const current = typeof forceTime === "number" ? forceTime : getFXCurrentTime2();
+  document.getElementById('fxTime2').textContent =
+    `${formatTime(current)} / ${formatTime(duration)}`;
+  let percent = duration ? Math.min(100, (current / duration) * 100) : 0;
+  document.getElementById('fxProgressFill2').style.width = percent + "%";
+  if (fxIsPlaying2) fxAnimFrame2 = requestAnimationFrame(updateFXUI2);
+}
+
+// --- Utilities ---
+function formatTime(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  return `${Math.floor(sec/60)}:${('0'+(sec%60)).slice(-2)}`;
+}
 function getCurrentFXParams() {
   return {
     gain: parseFloat(document.getElementById('gainControl2').value),
     noiseReduction: parseFloat(document.getElementById('noiseReduction2').value),
-    stereoWidth: parseFloat(document.getElementById('stereoWidth2').value),
-    exciter: parseFloat(document.getElementById('exciterControl2').value)
+    stereoWidth: parseFloat(document.getElementById('stereoWidth2').value)
   }
 }
 
-// Add exciter slider in HTML:
-// <label>Exciter:
-//   <input id="exciterControl2" type="range" min="0" max="1" step="0.01" value="0.3">
-//   <span id="exciterVal2">0.3</span>
-// </label>
+// --- Load Target Audio ---
+document.getElementById("targetAudio2").addEventListener("change", async function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  targetBuffer2 = await readAudioFile2(file);
+  targetDuration2 = targetBuffer2.duration;
+  document.getElementById('targetPlayerSection2').style.display = "";
+  document.getElementById('targetPlayPause2').disabled = false;
+  seekTargetFX2(0);
+  updateTargetUI2(0);
+});
 
-// Add it to control listeners:
-['gainControl2','noiseReduction2','stereoWidth2','exciterControl2'].forEach(id =>
+// --- Mastering Button ---
+document.getElementById('processBtn2').onclick = async () => {
+  const targetFile = document.getElementById('targetAudio2').files[0];
+  const genreSelect = document.getElementById('genreSelect2');
+  const selectedGenre = genreSelect.value;
+  const status = document.getElementById('status2');
+  status.textContent = "Processing...";
+  document.getElementById('outputPlayerSection2').style.display = "none";
+  document.getElementById('downloadLink2').style.display = "none";
+  document.getElementById('controlsSection2').style.display = "none";
+  if (!targetFile || !selectedGenre) {
+    status.textContent = "Please upload a target audio file and select a reference genre.";
+    return;
+  }
+
+  let percent = 0;
+  const bar = document.getElementById("progressBar2");
+  const text = document.getElementById("progressText2");
+  bar.style.width = "0%";
+  text.textContent = "0%";
+  const interval = setInterval(() => {
+    percent += 5;
+    if (percent > 90) clearInterval(interval);
+    bar.style.width = percent + "%";
+    text.textContent = percent + "%";
+  }, 200);
+
+  try {
+    const referenceArrayBuffer = await fetchReferenceAudio2(selectedGenre);
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const referenceAudio = await audioCtx.decodeAudioData(referenceArrayBuffer);
+    const targetAudio = await readAudioFile2(targetFile);
+
+    const referenceFeatures = await computeFeatures2(referenceAudio);
+
+    let userParams = { gain: 1, noiseReduction: 0, stereoWidth: 1 };
+    let masteredBuffer = await applyMastering2(targetAudio, referenceFeatures, userParams);
+
+    window._mastering_temp = {
+      targetAudio,
+      referenceFeatures,
+      masteredBuffer
+    };
+    fxBuffer2 = masteredBuffer;
+    fxDuration2 = masteredBuffer.duration;
+
+    document.getElementById('outputPlayerSection2').style.display = "";
+    document.getElementById('fxPlayPause2').disabled = false;
+    document.getElementById('downloadLink2').style.display = "inline-block";
+    document.getElementById('controlsSection2').style.display = "block";
+    bar.style.width = "100%";
+    text.textContent = "100%";
+    status.textContent = "Mastering complete! Adjust final controls and play preview.";
+
+    clearFX2();
+    seekFX2(0);
+    updateFXUI2(0);
+
+  } catch (err) {
+    status.textContent = "Error: " + err.message;
+    bar.style.width = "0%";
+    text.textContent = "0%";
+  } finally {
+    clearInterval(interval);
+  }
+}
+
+// --- Player Controls ---
+document.getElementById('targetPlayPause2').onclick = function() {
+  if (!targetBuffer2) return;
+  if (targetIsPlaying2) pauseTargetFX2();
+  else playTargetFX2(targetOffset2);
+};
+document.getElementById('fxPlayPause2').onclick = function() {
+  if (!fxBuffer2) return;
+  if (fxIsPlaying2) pauseFX2();
+  else playFX2(fxOffset2);
+};
+document.getElementById('targetProgressBar2').onclick = function(e) {
+  if (!targetBuffer2) return;
+  const rect = this.getBoundingClientRect();
+  const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const seekTime = (targetBuffer2.duration || 0) * percent;
+  seekTargetFX2(seekTime);
+  if (targetIsPlaying2) playTargetFX2(seekTime);
+};
+document.getElementById('fxProgressBar2').onclick = function(e) {
+  if (!fxBuffer2) return;
+  const rect = this.getBoundingClientRect();
+  const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const seekTime = (fxBuffer2.duration || 0) * percent;
+  seekFX2(seekTime);
+  if (fxIsPlaying2) playFX2(seekTime);
+};
+['gainControl2','noiseReduction2','stereoWidth2'].forEach(id =>
   document.getElementById(id).addEventListener('input', () => {
     document.getElementById('gainVal2').innerText = document.getElementById('gainControl2').value;
     document.getElementById('noiseVal2').innerText = document.getElementById('noiseReduction2').value;
     document.getElementById('widthVal2').innerText = document.getElementById('stereoWidth2').value;
-    document.getElementById('exciterVal2').innerText = document.getElementById('exciterControl2').value;
     if (fxBuffer2 && fxIsPlaying2) playFX2(getFXCurrentTime2());
     else if (fxBuffer2) updateFXUI2();
   })
 );
+
+// --- Payment Modal HTML Injection ---
+function injectPaymentModals() {
+  if (document.getElementById('payModal2')) return;
+  const payModal = document.createElement('div');
+  payModal.id = 'payModal2';
+  payModal.style = 'display:none;position:fixed;z-index:10001;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);';
+  payModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:400px;margin:10vh auto;border-radius:8px;box-shadow:0 4px 24px #222;">
+      <h3 style = "text-align:center">Choose Payment</h3>
+      <div style="margin:2em 0;display:flex;justify-content:space-between;">
+        <span id="paystackBtn2" style="flex:1;margin-right:1em;">
+        <img src = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png"/>
+        Paystack</span>
+        <div id="paypalBtn2" style="flex:1;"></div>
+      </div>
+      <button id="payCancel2" style="width:100%" style = "background-color:black;color:white;border-radius:10px">Cancel</button>
+    </div>
+  `;
+  const prepModal = document.createElement('div');
+  prepModal.id = 'prepModal2';
+  prepModal.style = 'display:none;position:fixed;z-index:10002;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);';
+  prepModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:350px;margin:20vh auto;border-radius:8px;box-shadow:0 4px 18px #222;">
+      <h4>Please wait while your download is being prepared...</h4>
+      <div id="prepSpinner2" style="margin:2em auto;text-align:center;">
+        <span style="display:inline-block;width:32px;height:32px;border:4px solid #ccc;border-top:4px solid #007bff;border-radius:50%;animation:spin 1s linear infinite;"></span>
+      </div>
+      <p id="prepStatus2" style="margin-top:1em;">Your download will begin automatically once ready.</p>
+    </div>
+    <style>
+      @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+  `;
+  document.body.appendChild(payModal);
+  document.body.appendChild(prepModal);
+}
+injectPaymentModals();
+
+document.getElementById('downloadLink2').onclick = function(e) {
+  e.preventDefault();
+  document.getElementById('payModal2').style.display = '';
+  renderPaypalButton();
+};
+document.getElementById('payCancel2').onclick = function() {
+  document.getElementById('payModal2').style.display = 'none';
+};
+document.getElementById('paystackBtn2').onclick = function() {
+  startPaystack();
+};
+function renderPaypalButton() {
+  if (document.getElementById('paypalBtn2').children.length) return;
+  paypal.Buttons({
+    style: {
+      layout: 'vertical',
+      color:  'blue',
+      shape:  'rect',
+      label:  'paypal'
+    },
+    createOrder: function(data, actions) {
+      return actions.order.create({
+        purchase_units: [{
+          amount: { value: '4' } // $10.00 USD, change as needed!
+        }]
+      });
+    },
+    onApprove: function(data, actions) {
+      return actions.order.capture().then(function(details) {
+        document.getElementById('payModal2').style.display = 'none';
+        paymentConfirmed('paypal', details);
+      });
+    },
+    onError: function(err) {
+      alert("Paypal error: " + err);
+    },
+    onCancel: function() {
+      alert("Paypal payment cancelled.");
+    }
+  }).render('#paypalBtn2');
+}
+function startPaystack() {
+  let email = prompt("Enter your email to proceed with payment (Paystack):", " ");
+  if (!email) {
+    alert("Payment cancelled. Email required.");
+    document.getElementById('payModal2').style.display = '';
+    return;
+  }
+  let amount = 5000 * 1000 // Amount in kobo (₦5000)
+  let handler = PaystackPop.setup({
+    key: 'pk_test_7051b3225597c778f3523710e74ac5da75022fe2',
+    email: email,
+    amount: amount,
+    currency: "NGN",
+    ref: 'master_' + Math.floor(Math.random()*1000000000),
+    label: "Mastered Track Download",
+    callback: function(response) {
+      document.getElementById('payModal2').style.display = 'none';
+      paymentConfirmed('paystack', response);
+    },
+    onClose: function() {
+      alert('Payment window closed. Please try again to proceed.');
+      document.getElementById('payModal2').style.display = '';
+    }
+  });
+  handler.openIframe();
+}
+function paymentConfirmed(platform, details) {
+  document.getElementById('prepModal2').style.display = '';
+  document.getElementById('prepStatus2').textContent = "Your download will begin automatically once ready.";
+  prepareAndDownloadMasteredTrack();
+}
+async function prepareAndDownloadMasteredTrack() {
+  try {
+    const {targetAudio, referenceFeatures} = window._mastering_temp;
+    const params = getCurrentFXParams();
+    document.getElementById('prepStatus2').textContent = "Preparing mastered track for download...";
+    let buffer = await applyMastering2(targetAudio, referenceFeatures, params);
+    document.getElementById('prepStatus2').textContent = "Encoding audio file...";
+    const wavData = await WavEncoder2.encode({
+      sampleRate: buffer.sampleRate,
+      channelData: Array.from({length: buffer.numberOfChannels}, (_, i) => buffer.getChannelData(i))
+    });
+    document.getElementById('prepStatus2').textContent = "Your download is starting...";
+    const blob = new Blob([wavData], {type: "audio/wav"});
+    const url = URL.createObjectURL(blob);
+    const tmpLink = document.createElement('a');
+    tmpLink.href = url;
+    tmpLink.download = "mastered_track.wav";
+    document.body.appendChild(tmpLink);
+    tmpLink.click();
+    tmpLink.remove();
+    setTimeout(() => {
+      document.getElementById('prepModal2').style.display = 'none';
+    }, 2000);
+  } catch (err) {
+    document.getElementById('prepStatus2').textContent = "Error preparing download: " + err.message;
+    setTimeout(() => {
+      document.getElementById('prepModal2').style.display = 'none';
+    }, 4000);
+  }
+}
+
+/*
+-------------------------
+REQUIRED IN YOUR HTML:
+-------------------------
+<script src="https://js.paystack.co/v1/inline.js"></script>
+<script src="https://www.paypal.com/sdk/js?client-id=AZ_EW2Q9G-3VsiQYs8XaQsh0VUxPj_2cb2HBoSSUYie4PEmC2PLe1hfT-IcipBeRYygXwnnpOL00o6pY&currency=USD"></script>
+-------------------------
+*/
