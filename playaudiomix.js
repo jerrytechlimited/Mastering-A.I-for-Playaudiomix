@@ -516,11 +516,9 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
     else if (fxBuffer2) updateFXUI2();
   })
 );
-
 // --- Modal HTML Injection ---
 function injectDownloadModals() {
-  if (document.getElementById('tosModal2')) return; // Prevent double injection
-
+  if (document.getElementById('tosModal2')) return;
   // Terms of Service Modal
   const tosModal = document.createElement('div');
   tosModal.id = 'tosModal2';
@@ -536,7 +534,6 @@ function injectDownloadModals() {
       </div>
     </div>
   `;
-
   // Payment Modal
   const payModal = document.createElement('div');
   payModal.id = 'payModal2';
@@ -546,12 +543,11 @@ function injectDownloadModals() {
       <h3>Choose Payment</h3>
       <div style="margin:2em 0;display:flex;justify-content:space-between;">
         <button id="paystackBtn2" style="flex:1;margin-right:1em;">Paystack</button>
-        <button id="paypalBtn2" style="flex:1;">PayPal</button>
+        <div id="paypalBtn2" style="flex:1;"></div>
       </div>
       <button id="payCancel2" style="width:100%">Cancel</button>
     </div>
   `;
-
   // Preparation Modal
   const prepModal = document.createElement('div');
   prepModal.id = 'prepModal2';
@@ -568,7 +564,6 @@ function injectDownloadModals() {
       @keyframes spin { 100% { transform: rotate(360deg); } }
     </style>
   `;
-
   document.body.appendChild(tosModal);
   document.body.appendChild(payModal);
   document.body.appendChild(prepModal);
@@ -585,6 +580,7 @@ document.getElementById('downloadLink2').onclick = function(e) {
 document.getElementById('tosAgree2').onclick = function() {
   document.getElementById('tosModal2').style.display = 'none';
   document.getElementById('payModal2').style.display = '';
+  renderPaypalButton();
 };
 document.getElementById('tosCancel2').onclick = function() {
   document.getElementById('tosModal2').style.display = 'none';
@@ -595,39 +591,84 @@ document.getElementById('payCancel2').onclick = function() {
   document.getElementById('payModal2').style.display = 'none';
 };
 
-// --- Payment Button Handlers ---
+// --- Paystack Button Handler ---
 document.getElementById('paystackBtn2').onclick = function() {
-  startPayment('paystack');
-};
-document.getElementById('paypalBtn2').onclick = function() {
-  startPayment('paypal');
+  startPaystack();
 };
 
-// --- Simulated Payment Flow ---
-// Replace this with actual Paystack/Paypal API integration
-function startPayment(type) {
-  document.getElementById('payModal2').style.display = 'none';
-  // Simulate external payment API
-  if (type === 'paystack') {
-    // Integrate Paystack JS SDK here. On success, call paymentConfirmed();
-    setTimeout(paymentConfirmed, 1500); // Replace with real callback
-  } else if (type === 'paypal') {
-    // Integrate Paypal JS SDK here. On success, call paymentConfirmed();
-    setTimeout(paymentConfirmed, 1500); // Replace with real callback
+// --- Paypal Button Render ---
+function renderPaypalButton() {
+  // Only render once
+  if (document.getElementById('paypalBtn2').children.length) return;
+  paypal.Buttons({
+    style: {
+      layout: 'vertical',
+      color:  'blue',
+      shape:  'rect',
+      label:  'paypal'
+    },
+    createOrder: function(data, actions) {
+      // Set up transaction details
+      return actions.order.create({
+        purchase_units: [{
+          amount: { value: '10.00' } // $10.00 USD, change as needed
+        }]
+      });
+    },
+    onApprove: function(data, actions) {
+      // Capture the funds from the transaction
+      return actions.order.capture().then(function(details) {
+        document.getElementById('payModal2').style.display = 'none';
+        paymentConfirmed('paypal', details);
+      });
+    },
+    onError: function(err) {
+      alert("Paypal error: " + err);
+    },
+    onCancel: function() {
+      alert("Paypal payment cancelled.");
+    }
+  }).render('#paypalBtn2');
+}
+
+// --- Paystack Integration ---
+function startPaystack() {
+  let email = prompt("Enter your email to proceed with payment (Paystack):", "user@example.com");
+  if (!email) {
+    alert("Payment cancelled. Email required.");
+    document.getElementById('payModal2').style.display = '';
+    return;
   }
+  let amount = 1000 * 100; // Amount in kobo (₦1000), change as needed
+  let handler = PaystackPop.setup({
+    key: 'pk_live_656d3f492c531cc4599abaa10d424d6ac8313954',
+    email: email,
+    amount: amount,
+    currency: "NGN",
+    ref: 'master_' + Math.floor(Math.random()*1000000000),
+    label: "Mastered Track Download",
+    callback: function(response) {
+      document.getElementById('payModal2').style.display = 'none';
+      paymentConfirmed('paystack', response);
+    },
+    onClose: function() {
+      alert('Payment window closed. Please try again to proceed.');
+      document.getElementById('payModal2').style.display = '';
+    }
+  });
+  handler.openIframe();
 }
 
 // --- When payment is confirmed ---
-function paymentConfirmed() {
+function paymentConfirmed(platform, details) {
   document.getElementById('prepModal2').style.display = '';
   document.getElementById('prepStatus2').textContent = "Your download will begin automatically once ready.";
-  // Prepare the blob and start download after encoding completes
   prepareAndDownloadMasteredTrack();
 }
 
+// --- Download preparation and trigger ---
 async function prepareAndDownloadMasteredTrack() {
   try {
-    // Use mastering temp storage (from your processBtn2 handler)
     const {targetAudio, referenceFeatures} = window._mastering_temp;
     const params = getCurrentFXParams();
     document.getElementById('prepStatus2').textContent = "Preparing mastered track for download...";
@@ -641,7 +682,6 @@ async function prepareAndDownloadMasteredTrack() {
     const blob = new Blob([wavData], {type: "audio/wav"});
     const url = URL.createObjectURL(blob);
 
-    // Create a temp link and trigger download
     const tmpLink = document.createElement('a');
     tmpLink.href = url;
     tmpLink.download = "mastered_track.wav";
