@@ -1,4 +1,4 @@
- // --- Reference Tracks ---
+// --- Reference Tracks ---
 const REFERENCE_TRACKS2 = {
   JAZZ: "https://res.cloudinary.com/dozclei2n/video/upload/v1757087501/n884ce4bb65d328ecb03c598409e2b168-79659fb3286c9ea31c4e6973da4f7f8e_r3tywn.mp3",
   AFROBEAT: "https://res.cloudinary.com/dozclei2n/video/upload/v1757219191/fast-rock-353534_gbhgxb.mp3",
@@ -110,12 +110,10 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   const src = audioCtx.createBufferSource();
   src.buffer = targetBuffer;
 
-  // Gain for RMS normalization + user gain
   const targetRMS = Math.sqrt(targetBuffer.getChannelData(0).reduce((sum, v) => sum + v*v, 0) / targetBuffer.length);
   const gainNode = audioCtx.createGain();
   gainNode.gain.value = (referenceFeatures.rms / (targetRMS || 1)) * (userParams.gain || 1);
 
-  // Multi-band EQ: Low, Mid, High bands
   function makeEQ(type, freq, gain) {
     const eq = audioCtx.createBiquadFilter();
     eq.type = type; eq.frequency.value = freq; eq.gain.value = gain;
@@ -130,14 +128,12 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   const eqMid = makeEQ("peaking", 1000, midAvg/10);
   const eqHigh = makeEQ("highshelf", 6000, highAvg/10);
 
-  // Compressor for dynamic range
   const comp = audioCtx.createDynamicsCompressor();
   comp.threshold.value = -20 + referenceFeatures.std * 10;
   comp.ratio.value = 2.5;
   comp.attack.value = 0.003;
   comp.release.value = 0.25;
 
-  // Noise reduction (simple gate)
   let noiseGate;
   if (userParams.noiseReduction && userParams.noiseReduction > 0) {
     noiseGate = audioCtx.createDynamicsCompressor();
@@ -147,7 +143,6 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     noiseGate.release.value = 0.1;
   }
 
-  // Stereo width (simple stereo panning matrix)
   let stereoNode = null;
   if (userParams.stereoWidth !== undefined) {
     const width = Math.max(0, Math.min(2, userParams.stereoWidth));
@@ -170,7 +165,6 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     }
   }
 
-  // Connection chain
   let lastNode = gainNode;
   if (noiseGate) {
     lastNode.connect(noiseGate);
@@ -207,7 +201,7 @@ function clearTargetFX2() {
 }
 function playTargetFX2(startAt = 0) {
   if (!targetBuffer2) return;
-  pauseFX2(true); // Stop mastered if playing!
+  pauseFX2(true);
   clearTargetFX2();
   targetCtx2 = new (window.AudioContext || window.webkitAudioContext)();
   targetSource2 = targetCtx2.createBufferSource();
@@ -238,7 +232,7 @@ function pauseTargetFX2(silent) {
   document.getElementById('targetPlayPause2').textContent = "▶";
   cancelAnimationFrame(targetAnimFrame2);
   targetAnimFrame2 = null;
-  if (!silent) pauseFX2(true); // Stop mastered if this was a user action
+  if (!silent) pauseFX2(true);
 }
 function seekTargetFX2(time) {
   targetOffset2 = time;
@@ -317,7 +311,7 @@ function makeRealtimeFXChain(buffer, params) {
 }
 function playFX2(startAt = 0) {
   if (!fxBuffer2) return;
-  pauseTargetFX2(true); // Stop target if playing!
+  pauseTargetFX2(true);
   clearFX2();
   const params = getCurrentFXParams();
   makeRealtimeFXChain(fxBuffer2, params);
@@ -346,7 +340,7 @@ function pauseFX2(silent) {
   document.getElementById('fxPlayPause2').textContent = "▶";
   cancelAnimationFrame(fxAnimFrame2);
   fxAnimFrame2 = null;
-  if (!silent) pauseTargetFX2(true); // Stop target if this was a user action
+  if (!silent) pauseTargetFX2(true);
 }
 function seekFX2(time) {
   fxOffset2 = time;
@@ -425,14 +419,11 @@ document.getElementById('processBtn2').onclick = async () => {
     const referenceAudio = await audioCtx.decodeAudioData(referenceArrayBuffer);
     const targetAudio = await readAudioFile2(targetFile);
 
-    // Extract reference features
     const referenceFeatures = await computeFeatures2(referenceAudio);
 
-    // Apply mastering (first pass, default controls)
     let userParams = { gain: 1, noiseReduction: 0, stereoWidth: 1 };
     let masteredBuffer = await applyMastering2(targetAudio, referenceFeatures, userParams);
 
-    // Store for realtime playback
     window._mastering_temp = {
       targetAudio,
       referenceFeatures,
@@ -441,21 +432,6 @@ document.getElementById('processBtn2').onclick = async () => {
     fxBuffer2 = masteredBuffer;
     fxDuration2 = masteredBuffer.duration;
 
-    // Download link prepares WAV with current FX settings
-    const downloadLink = document.getElementById('downloadLink2');
-    downloadLink.onclick = async function(e) {
-      const params = getCurrentFXParams();
-      let buffer = await applyMastering2(targetAudio, referenceFeatures, params);
-      const wavData = await WavEncoder2.encode({
-        sampleRate: buffer.sampleRate,
-        channelData: Array.from({length: buffer.numberOfChannels}, (_, i) => buffer.getChannelData(i))
-      });
-      const blob = new Blob([wavData], {type: "audio/wav"});
-      const url = URL.createObjectURL(blob);
-      downloadLink.href = url;
-    }
-
-    // UI Show
     document.getElementById('outputPlayerSection2').style.display = "";
     document.getElementById('fxPlayPause2').disabled = false;
     document.getElementById('downloadLink2').style.display = "inline-block";
@@ -464,7 +440,6 @@ document.getElementById('processBtn2').onclick = async () => {
     text.textContent = "100%";
     status.textContent = "Mastering complete! Adjust final controls and play preview.";
 
-    // Prepare mastered player
     clearFX2();
     seekFX2(0);
     updateFXUI2(0);
@@ -505,8 +480,6 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
   seekFX2(seekTime);
   if (fxIsPlaying2) playFX2(seekTime);
 };
-
-// --- FX Controls (mastered only) ---
 ['gainControl2','noiseReduction2','stereoWidth2'].forEach(id =>
   document.getElementById(id).addEventListener('input', () => {
     document.getElementById('gainVal2').innerText = document.getElementById('gainControl2').value;
@@ -516,3 +489,151 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
     else if (fxBuffer2) updateFXUI2();
   })
 );
+
+// --- Payment Modal HTML Injection ---
+function injectPaymentModals() {
+  if (document.getElementById('payModal2')) return;
+  const payModal = document.createElement('div');
+  payModal.id = 'payModal2';
+  payModal.style = 'display:none;position:fixed;z-index:10001;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);';
+  payModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:400px;margin:10vh auto;border-radius:8px;box-shadow:0 4px 24px #222;">
+      <h3>Choose Payment</h3>
+      <div style="margin:2em 0;display:flex;justify-content:space-between;">
+        <button id="paystackBtn2" style="flex:1;margin-right:1em;">Paystack</button>
+        <div id="paypalBtn2" style="flex:1;"></div>
+      </div>
+      <button id="payCancel2" style="width:100%">Cancel</button>
+    </div>
+  `;
+  const prepModal = document.createElement('div');
+  prepModal.id = 'prepModal2';
+  prepModal.style = 'display:none;position:fixed;z-index:10002;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);';
+  prepModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:350px;margin:20vh auto;border-radius:8px;box-shadow:0 4px 18px #222;">
+      <h4>Please wait while your download is being prepared...</h4>
+      <div id="prepSpinner2" style="margin:2em auto;text-align:center;">
+        <span style="display:inline-block;width:32px;height:32px;border:4px solid #ccc;border-top:4px solid #007bff;border-radius:50%;animation:spin 1s linear infinite;"></span>
+      </div>
+      <p id="prepStatus2" style="margin-top:1em;">Your download will begin automatically once ready.</p>
+    </div>
+    <style>
+      @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+  `;
+  document.body.appendChild(payModal);
+  document.body.appendChild(prepModal);
+}
+injectPaymentModals();
+
+document.getElementById('downloadLink2').onclick = function(e) {
+  e.preventDefault();
+  document.getElementById('payModal2').style.display = '';
+  renderPaypalButton();
+};
+document.getElementById('payCancel2').onclick = function() {
+  document.getElementById('payModal2').style.display = 'none';
+};
+document.getElementById('paystackBtn2').onclick = function() {
+  startPaystack();
+};
+function renderPaypalButton() {
+  if (document.getElementById('paypalBtn2').children.length) return;
+  paypal.Buttons({
+    style: {
+      layout: 'vertical',
+      color:  'blue',
+      shape:  'rect',
+      label:  'paypal'
+    },
+    createOrder: function(data, actions) {
+      return actions.order.create({
+        purchase_units: [{
+          amount: { value: '10.00' } // $10.00 USD, change as needed!
+        }]
+      });
+    },
+    onApprove: function(data, actions) {
+      return actions.order.capture().then(function(details) {
+        document.getElementById('payModal2').style.display = 'none';
+        paymentConfirmed('paypal', details);
+      });
+    },
+    onError: function(err) {
+      alert("Paypal error: " + err);
+    },
+    onCancel: function() {
+      alert("Paypal payment cancelled.");
+    }
+  }).render('#paypalBtn2');
+}
+function startPaystack() {
+  let email = prompt("Enter your email to proceed with payment (Paystack):", "user@example.com");
+  if (!email) {
+    alert("Payment cancelled. Email required.");
+    document.getElementById('payModal2').style.display = '';
+    return;
+  }
+  let amount = 1000 * 100; // Amount in kobo (₦1000)
+  let handler = PaystackPop.setup({
+    key: 'pk_live_656d3f492c531cc4599abaa10d424d6ac8313954',
+    email: email,
+    amount: amount,
+    currency: "NGN",
+    ref: 'master_' + Math.floor(Math.random()*1000000000),
+    label: "Mastered Track Download",
+    callback: function(response) {
+      document.getElementById('payModal2').style.display = 'none';
+      paymentConfirmed('paystack', response);
+    },
+    onClose: function() {
+      alert('Payment window closed. Please try again to proceed.');
+      document.getElementById('payModal2').style.display = '';
+    }
+  });
+  handler.openIframe();
+}
+function paymentConfirmed(platform, details) {
+  document.getElementById('prepModal2').style.display = '';
+  document.getElementById('prepStatus2').textContent = "Your download will begin automatically once ready.";
+  prepareAndDownloadMasteredTrack();
+}
+async function prepareAndDownloadMasteredTrack() {
+  try {
+    const {targetAudio, referenceFeatures} = window._mastering_temp;
+    const params = getCurrentFXParams();
+    document.getElementById('prepStatus2').textContent = "Preparing mastered track for download...";
+    let buffer = await applyMastering2(targetAudio, referenceFeatures, params);
+    document.getElementById('prepStatus2').textContent = "Encoding audio file...";
+    const wavData = await WavEncoder2.encode({
+      sampleRate: buffer.sampleRate,
+      channelData: Array.from({length: buffer.numberOfChannels}, (_, i) => buffer.getChannelData(i))
+    });
+    document.getElementById('prepStatus2').textContent = "Your download is starting...";
+    const blob = new Blob([wavData], {type: "audio/wav"});
+    const url = URL.createObjectURL(blob);
+    const tmpLink = document.createElement('a');
+    tmpLink.href = url;
+    tmpLink.download = "mastered_track.wav";
+    document.body.appendChild(tmpLink);
+    tmpLink.click();
+    tmpLink.remove();
+    setTimeout(() => {
+      document.getElementById('prepModal2').style.display = 'none';
+    }, 2000);
+  } catch (err) {
+    document.getElementById('prepStatus2').textContent = "Error preparing download: " + err.message;
+    setTimeout(() => {
+      document.getElementById('prepModal2').style.display = 'none';
+    }, 4000);
+  }
+}
+
+/*
+-------------------------
+REQUIRED IN YOUR HTML:
+-------------------------
+<script src="https://js.paystack.co/v1/inline.js"></script>
+<script src="https://www.paypal.com/sdk/js?client-id=AZ_EW2Q9G-3VsiQYs8XaQsh0VUxPj_2cb2HBoSSUYie4PEmC2PLe1hfT-IcipBeRYygXwnnpOL00o6pY&currency=USD"></script>
+-------------------------
+*/
