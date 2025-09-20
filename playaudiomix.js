@@ -551,7 +551,7 @@ function renderPaypalButton() {
     createOrder: function(data, actions) {
       return actions.order.create({
         purchase_units: [{
-          amount: { value: '10.00' } // $10.00 USD, change as needed!
+          amount: { value: '4' } // $10.00 USD, change as needed!
         }]
       });
     },
@@ -576,7 +576,7 @@ function startPaystack() {
     document.getElementById('payModal2').style.display = '';
     return;
   }
-  let amount = 5000 * 100; // Amount in kobo (₦5000)
+  let amount = 50000 // Amount in kobo (₦5000)
   let handler = PaystackPop.setup({
     key: 'pk_test_7051b3225597c778f3523710e74ac5da75022fe2',
     email: email,
