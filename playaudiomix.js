@@ -505,7 +505,7 @@ function injectPaymentModals() {
         Paystack</span>
         <div id="paypalBtn2" style="flex:1;"></div>
       </div>
-      <button id="payCancel2" style="width:100%">Cancel</button>
+      <button id="payCancel2" style="width:100%" style = "background-color:black;color:white;border-radius:10px">Cancel</button>
     </div>
   `;
   const prepModal = document.createElement('div');
@@ -570,13 +570,13 @@ function renderPaypalButton() {
   }).render('#paypalBtn2');
 }
 function startPaystack() {
-  let email = prompt("Enter your email to proceed with payment (Paystack):", "user@example.com");
+  let email = prompt("Enter your email to proceed with payment (Paystack):", " ");
   if (!email) {
     alert("Payment cancelled. Email required.");
     document.getElementById('payModal2').style.display = '';
     return;
   }
-  let amount = 50000 // Amount in kobo (₦5000)
+  let amount = 5000 * 1000 // Amount in kobo (₦5000)
   let handler = PaystackPop.setup({
     key: 'pk_test_7051b3225597c778f3523710e74ac5da75022fe2',
     email: email,
