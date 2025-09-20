@@ -516,3 +516,145 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
     else if (fxBuffer2) updateFXUI2();
   })
 );
+
+// --- Modal HTML Injection ---
+function injectDownloadModals() {
+  if (document.getElementById('tosModal2')) return; // Prevent double injection
+
+  // Terms of Service Modal
+  const tosModal = document.createElement('div');
+  tosModal.id = 'tosModal2';
+  tosModal.style = 'display:none;position:fixed;z-index:10000;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);';
+  tosModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:400px;margin:10vh auto;border-radius:8px;box-shadow:0 4px 24px #222;">
+      <h3>Terms of Service</h3>
+      <p>Please read and agree to our Terms of Service before downloading your mastered track.<br/>
+      <small>(You can put your full TOS text here)</small></p>
+      <div style="display:flex;justify-content:space-between;margin-top:2em;">
+        <button id="tosAgree2" style="flex:1;margin-right:1em;">Agree</button>
+        <button id="tosCancel2" style="flex:1;">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  // Payment Modal
+  const payModal = document.createElement('div');
+  payModal.id = 'payModal2';
+  payModal.style = 'display:none;position:fixed;z-index:10001;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);';
+  payModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:400px;margin:10vh auto;border-radius:8px;box-shadow:0 4px 24px #222;">
+      <h3>Choose Payment</h3>
+      <div style="margin:2em 0;display:flex;justify-content:space-between;">
+        <button id="paystackBtn2" style="flex:1;margin-right:1em;">Paystack</button>
+        <button id="paypalBtn2" style="flex:1;">PayPal</button>
+      </div>
+      <button id="payCancel2" style="width:100%">Cancel</button>
+    </div>
+  `;
+
+  // Preparation Modal
+  const prepModal = document.createElement('div');
+  prepModal.id = 'prepModal2';
+  prepModal.style = 'display:none;position:fixed;z-index:10002;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);';
+  prepModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:350px;margin:20vh auto;border-radius:8px;box-shadow:0 4px 18px #222;">
+      <h4>Please wait while your download is being prepared...</h4>
+      <div id="prepSpinner2" style="margin:2em auto;text-align:center;">
+        <span style="display:inline-block;width:32px;height:32px;border:4px solid #ccc;border-top:4px solid #007bff;border-radius:50%;animation:spin 1s linear infinite;"></span>
+      </div>
+      <p id="prepStatus2" style="margin-top:1em;">Your download will begin automatically once ready.</p>
+    </div>
+    <style>
+      @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+  `;
+
+  document.body.appendChild(tosModal);
+  document.body.appendChild(payModal);
+  document.body.appendChild(prepModal);
+}
+injectDownloadModals();
+
+// --- Download Button Handler ---
+document.getElementById('downloadLink2').onclick = function(e) {
+  e.preventDefault();
+  document.getElementById('tosModal2').style.display = '';
+};
+
+// --- Terms Modal logic ---
+document.getElementById('tosAgree2').onclick = function() {
+  document.getElementById('tosModal2').style.display = 'none';
+  document.getElementById('payModal2').style.display = '';
+};
+document.getElementById('tosCancel2').onclick = function() {
+  document.getElementById('tosModal2').style.display = 'none';
+};
+
+// --- Payment Modal logic ---
+document.getElementById('payCancel2').onclick = function() {
+  document.getElementById('payModal2').style.display = 'none';
+};
+
+// --- Payment Button Handlers ---
+document.getElementById('paystackBtn2').onclick = function() {
+  startPayment('paystack');
+};
+document.getElementById('paypalBtn2').onclick = function() {
+  startPayment('paypal');
+};
+
+// --- Simulated Payment Flow ---
+// Replace this with actual Paystack/Paypal API integration
+function startPayment(type) {
+  document.getElementById('payModal2').style.display = 'none';
+  // Simulate external payment API
+  if (type === 'paystack') {
+    // Integrate Paystack JS SDK here. On success, call paymentConfirmed();
+    setTimeout(paymentConfirmed, 1500); // Replace with real callback
+  } else if (type === 'paypal') {
+    // Integrate Paypal JS SDK here. On success, call paymentConfirmed();
+    setTimeout(paymentConfirmed, 1500); // Replace with real callback
+  }
+}
+
+// --- When payment is confirmed ---
+function paymentConfirmed() {
+  document.getElementById('prepModal2').style.display = '';
+  document.getElementById('prepStatus2').textContent = "Your download will begin automatically once ready.";
+  // Prepare the blob and start download after encoding completes
+  prepareAndDownloadMasteredTrack();
+}
+
+async function prepareAndDownloadMasteredTrack() {
+  try {
+    // Use mastering temp storage (from your processBtn2 handler)
+    const {targetAudio, referenceFeatures} = window._mastering_temp;
+    const params = getCurrentFXParams();
+    document.getElementById('prepStatus2').textContent = "Preparing mastered track for download...";
+    let buffer = await applyMastering2(targetAudio, referenceFeatures, params);
+    document.getElementById('prepStatus2').textContent = "Encoding audio file...";
+    const wavData = await WavEncoder2.encode({
+      sampleRate: buffer.sampleRate,
+      channelData: Array.from({length: buffer.numberOfChannels}, (_, i) => buffer.getChannelData(i))
+    });
+    document.getElementById('prepStatus2').textContent = "Your download is starting...";
+    const blob = new Blob([wavData], {type: "audio/wav"});
+    const url = URL.createObjectURL(blob);
+
+    // Create a temp link and trigger download
+    const tmpLink = document.createElement('a');
+    tmpLink.href = url;
+    tmpLink.download = "mastered_track.wav";
+    document.body.appendChild(tmpLink);
+    tmpLink.click();
+    tmpLink.remove();
+    setTimeout(() => {
+      document.getElementById('prepModal2').style.display = 'none';
+    }, 2000);
+  } catch (err) {
+    document.getElementById('prepStatus2').textContent = "Error preparing download: " + err.message;
+    setTimeout(() => {
+      document.getElementById('prepModal2').style.display = 'none';
+    }, 4000);
+  }
+}
