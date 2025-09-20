@@ -498,9 +498,11 @@ function injectPaymentModals() {
   payModal.style = 'display:none;position:fixed;z-index:10001;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);';
   payModal.innerHTML = `
     <div style="background:#fff;padding:2em;max-width:400px;margin:10vh auto;border-radius:8px;box-shadow:0 4px 24px #222;">
-      <h3>Choose Payment</h3>
+      <h3 style = "text-align:center">Choose Payment</h3>
       <div style="margin:2em 0;display:flex;justify-content:space-between;">
-        <button id="paystackBtn2" style="flex:1;margin-right:1em;">Paystack</button>
+        <span id="paystackBtn2" style="flex:1;margin-right:1em;">
+        <img src = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png"/>
+        Paystack</span>
         <div id="paypalBtn2" style="flex:1;"></div>
       </div>
       <button id="payCancel2" style="width:100%">Cancel</button>
