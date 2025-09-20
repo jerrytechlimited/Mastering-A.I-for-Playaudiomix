@@ -289,6 +289,34 @@ function makeRealtimeFXChain(buffer, params) {
   } else {
     fxNoise2 = null;
   }
+// Exciter (adds harmonic distortion to highs)
+let exciterNode = null;
+if (params.exciterAmount && params.exciterAmount > 0) {
+  const bandpass = fxCtx2.createBiquadFilter();
+  bandpass.type = "highpass";
+  bandpass.frequency.value = 3000; // only highs
+
+  const waveshaper = fxCtx2.createWaveShaper();
+  const curve = new Float32Array(65536);
+  const amount = params.exciterAmount * 50; // control strength
+  for (let i = 0; i < curve.length; i++) {
+    let x = (i / 32768) - 1;
+    curve[i] = Math.tanh(amount * x);
+  }
+  waveshaper.curve = curve;
+  waveshaper.oversample = "4x";
+
+  const exciterGain = fxCtx2.createGain();
+  exciterGain.gain.value = params.exciterAmount * 0.5;
+
+  // Connect exciter
+  last.connect(bandpass);
+  bandpass.connect(waveshaper);
+  waveshaper.connect(exciterGain);
+  exciterGain.connect(fxCtx2.destination);
+
+  exciterNode = { bandpass, waveshaper, exciterGain };
+}
 
   if (typeof params.stereoWidth !== "undefined" && buffer.numberOfChannels > 1) {
     fxSplitter2 = fxCtx2.createChannelSplitter(2);
@@ -376,9 +404,11 @@ function getCurrentFXParams() {
   return {
     gain: parseFloat(document.getElementById('gainControl2').value),
     noiseReduction: parseFloat(document.getElementById('noiseReduction2').value),
-    stereoWidth: parseFloat(document.getElementById('stereoWidth2').value)
+    stereoWidth: parseFloat(document.getElementById('stereoWidth2').value),
+    exciterAmount: parseFloat(document.getElementById('exciterControl2').value)
   }
 }
+
 
 // --- Load Target Audio ---
 document.getElementById("targetAudio2").addEventListener("change", async function(e) {
@@ -507,11 +537,12 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
 };
 
 // --- FX Controls (mastered only) ---
-['gainControl2','noiseReduction2','stereoWidth2'].forEach(id =>
+['gainControl2','noiseReduction2','stereoWidth2','exciterControl2'].forEach(id =>
   document.getElementById(id).addEventListener('input', () => {
     document.getElementById('gainVal2').innerText = document.getElementById('gainControl2').value;
     document.getElementById('noiseVal2').innerText = document.getElementById('noiseReduction2').value;
     document.getElementById('widthVal2').innerText = document.getElementById('stereoWidth2').value;
+    document.getElementById('exciterVal2').innerText = document.getElementById('exciterControl2').value;
     if (fxBuffer2 && fxIsPlaying2) playFX2(getFXCurrentTime2());
     else if (fxBuffer2) updateFXUI2();
   })
