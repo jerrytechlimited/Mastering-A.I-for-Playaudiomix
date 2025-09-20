@@ -683,45 +683,6 @@ function createExciterNode(audioCtx, amount = 0.5, freq = 3000) {
   return { input, output, setAmount: (a) => { mix.gain.value = a; } };
 }
 
-// --- Plate Reverb Effect ---
-function createPlateReverbNode(audioCtx, duration = 2.0, decay = 2.5, mix = 0.2) {
-  const input = audioCtx.createGain();
-  const convolver = audioCtx.createConvolver();
-  convolver.buffer = createPlateImpulse(audioCtx, duration, decay);
-  const wetGain = audioCtx.createGain();
-  wetGain.gain.value = mix;
-  const dryGain = audioCtx.createGain();
-  dryGain.gain.value = 1 - mix;
-
-  input.connect(convolver).connect(wetGain);
-  input.connect(dryGain);
-
-  const output = audioCtx.createGain();
-  wetGain.connect(output);
-  dryGain.connect(output);
-
-  function updateReverb({ mix: m, decay: d, duration: t }) {
-    if (m !== undefined) wetGain.gain.value = m, dryGain.gain.value = 1 - m;
-    if (d || t) {
-      convolver.buffer = createPlateImpulse(audioCtx, t || duration, d || decay);
-    }
-  }
-  return { input, output, updateReverb };
-}
-
-function createPlateImpulse(audioCtx, duration = 2.0, decay = 2.5) {
-  const rate = audioCtx.sampleRate;
-  const length = Math.floor(duration * rate);
-  const buffer = audioCtx.createBuffer(2, length, rate);
-  for (let c = 0; c < 2; ++c) {
-    const data = buffer.getChannelData(c);
-    for (let i = 0; i < length; ++i) {
-      const t = i / rate;
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-3 * t / decay) * (1 - 0.14 * Math.sin(2 * Math.PI * 1.3 * t));
-    }
-  }
-  return buffer;
-}
 
 // --- Apply Mastering (with Exciter and Plate Reverb) ---
 async function applyMastering2(targetBuffer, referenceFeatures, userParams = {}) {
@@ -864,11 +825,6 @@ function makeRealtimeFXChain(buffer, params) {
   const exciterFreq = params.exciterFreq !== undefined ? params.exciterFreq : 3500;
   const exciter = createExciterNode(fxCtx2, exciterAmount, exciterFreq);
 
-  const reverbMix = params.reverbMix !== undefined ? params.reverbMix : 0.13;
-  const reverbDuration = params.reverbDuration !== undefined ? params.reverbDuration : 1.7;
-  const reverbDecay = params.reverbDecay !== undefined ? params.reverbDecay : 2.5;
-  const plateReverb = createPlateReverbNode(fxCtx2, reverbDuration, reverbDecay, reverbMix);
-
   let last = fxSource2;
   last.connect(fxGain2);
   last = fxGain2;
@@ -876,8 +832,7 @@ function makeRealtimeFXChain(buffer, params) {
 
   last.connect(exciter.input);
   last = exciter.output;
-  last.connect(plateReverb.input);
-  last = plateReverb.output;
+ 
 
   if (fxSplitter2 && fxLeftGain2 && fxRightGain2 && fxMerger2) {
     last.connect(fxSplitter2);
@@ -898,9 +853,7 @@ function getCurrentFXParams() {
     stereoWidth: parseFloat(document.getElementById('stereoWidth2').value),
     exciterAmount: parseFloat(document.getElementById('exciterAmount2')?.value ?? 0.3),
     exciterFreq: parseFloat(document.getElementById('exciterFreq2')?.value ?? 3500),
-    reverbMix: parseFloat(document.getElementById('reverbMix2')?.value ?? 0.13),
-    reverbDuration: parseFloat(document.getElementById('reverbDuration2')?.value ?? 1.7),
-    reverbDecay: parseFloat(document.getElementById('reverbDecay2')?.value ?? 2.5)
+
   }
 }
 
