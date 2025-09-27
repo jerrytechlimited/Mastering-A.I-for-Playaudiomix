@@ -576,7 +576,7 @@ function startPaystack() {
     document.getElementById('payModal2').style.display = '';
     return;
   }
-  let amount = 5000 * 1000 // Amount in kobo (₦5000)
+  let amount = 500 * 1000 // Amount in kobo (₦5000)
   let handler = PaystackPop.setup({
     key: 'pk_live_656d3f492c531cc4599abaa10d424d6ac8313954',
     email: email,
