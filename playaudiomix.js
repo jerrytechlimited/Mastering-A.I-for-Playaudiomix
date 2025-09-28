@@ -17,9 +17,9 @@ const REFERENCE_TRACKS2 = {
 
 async function fetchReferenceAudio2(genre) {
   const url = REFERENCE_TRACKS2[genre];
-  if (!url) throw new Error("Reference audio not found for genre: " + genre);
+  if (!url) throw new Error("Please Try Again");
   const response = await fetch(url);
-  if (!response.ok) throw new Error("Failed to fetch reference audio.");
+  if (!response.ok) throw new Error("Please connect to internet");
   return await response.arrayBuffer();
 }
 
@@ -445,7 +445,7 @@ document.getElementById('processBtn2').onclick = async () => {
     updateFXUI2(0);
 
   } catch (err) {
-    status.textContent = "Error: " + err.message;
+    status.textContent = "Please Try Again, It Encountered Some Issue;
     bar.style.width = "0%";
     text.textContent = "0%";
   } finally {
