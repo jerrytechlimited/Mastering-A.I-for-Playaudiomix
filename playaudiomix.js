@@ -503,7 +503,7 @@ function injectPaymentModals() {
         <span id="paystackBtn2" style="flex:1;margin-right:1em;">
      <a>   <img src = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png"/>
         Paystack </a></span>
-        <div id="paypalBtn2" style="flex:1;overflow:scroll"></div>
+        <div id="paypalBtn2" style="flex:1;overflow-y:scroll"></div>
       </div>
       <button id="payCancel2" style="width:100%" style = "background-color:black;color:white;border-radius:10px">Cancel</button>
     </div>
