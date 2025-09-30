@@ -1,4 +1,4 @@
-// --- Reference Track---
+// --- Reference Tracks ---
 const REFERENCE_TRACKS2 = {
   JAZZ: "https://res.cloudinary.com/dozclei2n/video/upload/v1757087501/n884ce4bb65d328ecb03c598409e2b168-79659fb3286c9ea31c4e6973da4f7f8e_r3tywn.mp3",
   AFROBEAT: "https://res.cloudinary.com/dozclei2n/video/upload/v1757219191/fast-rock-353534_gbhgxb.mp3",
@@ -110,12 +110,10 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   const src = audioCtx.createBufferSource();
   src.buffer = targetBuffer;
 
-  // Gain for RMS normalization + user gain
   const targetRMS = Math.sqrt(targetBuffer.getChannelData(0).reduce((sum, v) => sum + v*v, 0) / targetBuffer.length);
   const gainNode = audioCtx.createGain();
   gainNode.gain.value = (referenceFeatures.rms / (targetRMS || 1)) * (userParams.gain || 1);
 
-  // Multi-band EQ: Low, Mid, High bands
   function makeEQ(type, freq, gain) {
     const eq = audioCtx.createBiquadFilter();
     eq.type = type; eq.frequency.value = freq; eq.gain.value = gain;
@@ -130,14 +128,12 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
   const eqMid = makeEQ("peaking", 1000, midAvg/10);
   const eqHigh = makeEQ("highshelf", 6000, highAvg/10);
 
-  // Compressor for dynamic range
   const comp = audioCtx.createDynamicsCompressor();
   comp.threshold.value = -20 + referenceFeatures.std * 10;
   comp.ratio.value = 2.5;
   comp.attack.value = 0.003;
   comp.release.value = 0.25;
 
-  // Noise reduction (simple gate)
   let noiseGate;
   if (userParams.noiseReduction && userParams.noiseReduction > 0) {
     noiseGate = audioCtx.createDynamicsCompressor();
@@ -147,7 +143,6 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     noiseGate.release.value = 0.1;
   }
 
-  // Stereo width (simple stereo panning matrix)
   let stereoNode = null;
   if (userParams.stereoWidth !== undefined) {
     const width = Math.max(0, Math.min(2, userParams.stereoWidth));
@@ -170,7 +165,6 @@ async function applyMastering2(targetBuffer, referenceFeatures, userParams = {})
     }
   }
 
-  // Connection chain
   let lastNode = gainNode;
   if (noiseGate) {
     lastNode.connect(noiseGate);
@@ -207,7 +201,7 @@ function clearTargetFX2() {
 }
 function playTargetFX2(startAt = 0) {
   if (!targetBuffer2) return;
-  pauseFX2(true); // Stop mastered if playing!
+  pauseFX2(true);
   clearTargetFX2();
   targetCtx2 = new (window.AudioContext || window.webkitAudioContext)();
   targetSource2 = targetCtx2.createBufferSource();
@@ -238,7 +232,7 @@ function pauseTargetFX2(silent) {
   document.getElementById('targetPlayPause2').textContent = "▶";
   cancelAnimationFrame(targetAnimFrame2);
   targetAnimFrame2 = null;
-  if (!silent) pauseFX2(true); // Stop mastered if this was a user action
+  if (!silent) pauseFX2(true);
 }
 function seekTargetFX2(time) {
   targetOffset2 = time;
@@ -317,7 +311,7 @@ function makeRealtimeFXChain(buffer, params) {
 }
 function playFX2(startAt = 0) {
   if (!fxBuffer2) return;
-  pauseTargetFX2(true); // Stop target if playing!
+  pauseTargetFX2(true);
   clearFX2();
   const params = getCurrentFXParams();
   makeRealtimeFXChain(fxBuffer2, params);
@@ -346,7 +340,7 @@ function pauseFX2(silent) {
   document.getElementById('fxPlayPause2').textContent = "▶";
   cancelAnimationFrame(fxAnimFrame2);
   fxAnimFrame2 = null;
-  if (!silent) pauseTargetFX2(true); // Stop target if this was a user action
+  if (!silent) pauseTargetFX2(true);
 }
 function seekFX2(time) {
   fxOffset2 = time;
@@ -425,14 +419,11 @@ document.getElementById('processBtn2').onclick = async () => {
     const referenceAudio = await audioCtx.decodeAudioData(referenceArrayBuffer);
     const targetAudio = await readAudioFile2(targetFile);
 
-    // Extract reference features
     const referenceFeatures = await computeFeatures2(referenceAudio);
 
-    // Apply mastering (first pass, default controls)
     let userParams = { gain: 1, noiseReduction: 0, stereoWidth: 1 };
     let masteredBuffer = await applyMastering2(targetAudio, referenceFeatures, userParams);
 
-    // Store for realtime playback
     window._mastering_temp = {
       targetAudio,
       referenceFeatures,
@@ -441,174 +432,6 @@ document.getElementById('processBtn2').onclick = async () => {
     fxBuffer2 = masteredBuffer;
     fxDuration2 = masteredBuffer.duration;
 
-    // Download link prepares WAV with current FX settings
-    const downloadLink = document.getElementById('downloadLink2');
-   // ---------- CONFIG ----------
-const PAYSTACK_PUBLIC_KEY = "YOUR_PAYSTACK_PUBLIC_KEY"; // <-- replace
-const amountInKobo = 10000; // e.g. 10000 kobo = NGN100. Adjust as needed.
-
-// ---------- Helpers ----------
-function showToast(msg, ms = 3000) {
-  const t = document.getElementById('downloadToast');
-  if (!t) return;
-  t.textContent = msg;
-  t.style.display = 'block';
-  clearTimeout(t._timeout);
-  t._timeout = setTimeout(() => t.style.display = 'none', ms);
-}
-
-function showTosModal() {
-  const m = document.getElementById('tosModal');
-  m.style.display = 'flex';
-}
-function hideTosModal() {
-  const m = document.getElementById('tosModal');
-  m.style.display = 'none';
-}
-
-// ---------- Blob preparation (memoized Promise) ----------
-/*
-  Creates and returns a Promise that resolves with an audio/wav Blob.
-  The Promise is memoized in window._downloadBlobPromise to avoid re-encoding.
-*/
-async function prepareMasteredBlob(paramsOverride = null) {
-  // If a blob is already prepared, return it immediately
-  if (window._downloadBlob) return window._downloadBlob;
-  // If encoding is already in progress, return the existing promise
-  if (window._downloadBlobPromise) return window._downloadBlobPromise;
-
-  // Use the last processed targetAudio + referenceFeatures stored earlier
-  if (!window._mastering_temp || !window._mastering_temp.targetAudio || !window._mastering_temp.referenceFeatures) {
-    return Promise.reject(new Error("No processed session found. Please process (master) the track first."));
-  }
-
-  const targetAudio = window._mastering_temp.targetAudio;
-  const referenceFeatures = window._mastering_temp.referenceFeatures;
-
-  // prefer current UI params unless a specific override provided
-  const fxParams = paramsOverride || getCurrentFXParams();
-
-  window._downloadBlobPromise = (async () => {
-    try {
-      // Inform user
-      showToast("Preparing mastered file — this may take a few seconds...");
-      // Run full rendering to get final buffer
-      const finalBuffer = await applyMastering2(targetAudio, referenceFeatures, fxParams);
-      // Encode to WAV
-      const wavData = await WavEncoder2.encode({
-        sampleRate: finalBuffer.sampleRate,
-        channelData: Array.from({length: finalBuffer.numberOfChannels}, (_, i) => finalBuffer.getChannelData(i))
-      });
-      const blob = new Blob([wavData], { type: "audio/wav" });
-      // memorize blob & object URL
-      window._downloadBlob = blob;
-      window._downloadObjectUrl = URL.createObjectURL(blob);
-      showToast("Mastered file ready — starting download...");
-      return blob;
-    } catch (err) {
-      console.error("Error preparing blob:", err);
-      showToast("Error preparing file: " + err.message, 6000);
-      throw err;
-    } finally {
-      // clear the promise so future calls can re-run if needed
-      window._downloadBlobPromise = null;
-    }
-  })();
-
-  return window._downloadBlobPromise;
-}
-
-// ---------- Trigger automatic download ----------
-function triggerDownloadFromBlob(blob, filename = "mastered.wav") {
-  const url = window._downloadObjectUrl || URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // keep objectUrl cached in window._downloadObjectUrl to avoid multiple creates
-  window._downloadObjectUrl = url;
-}
-
-// ---------- Payment integration (Paystack) ----------
-function startPaystackPayment(email = "customer@example.com", metadata = {}) {
-  return new Promise((resolve, reject) => {
-    if (!window.PaystackPop) {
-      reject(new Error("Paystack script not loaded. Include https://js.paystack.co/v1/inline.js"));
-      return;
-    }
-    const handler = window.PaystackPop.setup({
-      key: PAYSTACK_PUBLIC_KEY,
-      email: email,
-      amount: amountInKobo,
-      metadata: metadata,
-      onClose: function() {
-        reject(new Error("Payment popup closed."));
-      },
-      callback: function(response) {
-        // response.reference available. You should verify server-side for full security.
-        // For demo we resolve here and continue download
-        resolve(response);
-      }
-    });
-    handler.openIframe();
-  });
-}
-
-// ---------- Download flow handler ----------
-const downloadAnchor = document.getElementById('downloadLink2');
-if (downloadAnchor) {
-  downloadAnchor.addEventListener('click', function(e) {
-    e.preventDefault();
-    // Show TOS modal first
-    showTosModal();
-  });
-}
-
-// modal buttons
-document.getElementById('tosCancelBtn').addEventListener('click', () => {
-  hideTosModal();
-  showToast("Download cancelled.");
-});
-document.getElementById('tosAgreeBtn').addEventListener('click', async () => {
-  // Optionally disable the Agree button and show status
-  const statusEl = document.getElementById('tosStatus');
-  const agreeBtn = document.getElementById('tosAgreeBtn');
-  agreeBtn.disabled = true;
-  statusEl.textContent = "Opening payment...";
-  try {
-    // Optionally collect customer email from your UI; used here as placeholder.
-    const email = (document.getElementById('customerEmail') && document.getElementById('customerEmail').value) || "customer@example.com";
-
-    // START payment
-    const payResponse = await startPaystackPayment(email, { product: "track_master", note: "Mastered track purchase" });
-
-    // On success: hide modal and prepare + download file
-    hideTosModal();
-    statusEl.textContent = "";
-    showToast("Payment successful. Preparing download...");
-
-    // prepare blob (if not ready, prepareMasteredBlob will run encoding and resolve when done)
-    // we also show a countdown/wait if needed
-    const blob = await prepareMasteredBlob();
-    // start download automatically
-    triggerDownloadFromBlob(blob, "mastered.wav");
-
-    // Done - optionally show server verification or receipt step here
-    showToast("Download started. Thank you!");
-  } catch (err) {
-    console.error("Payment/download flow error:", err);
-    const statusEl = document.getElementById('tosStatus');
-    statusEl.textContent = "Error: " + err.message;
-    showToast(err.message, 5000);
-  } finally {
-    document.getElementById('tosAgreeBtn').disabled = false;
-  }
-});
-
-
-    // UI Show
     document.getElementById('outputPlayerSection2').style.display = "";
     document.getElementById('fxPlayPause2').disabled = false;
     document.getElementById('downloadLink2').style.display = "inline-block";
@@ -617,7 +440,6 @@ document.getElementById('tosAgreeBtn').addEventListener('click', async () => {
     text.textContent = "100%";
     status.textContent = "Mastering complete! Adjust final controls and play preview.";
 
-    // Prepare mastered player
     clearFX2();
     seekFX2(0);
     updateFXUI2(0);
@@ -658,8 +480,6 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
   seekFX2(seekTime);
   if (fxIsPlaying2) playFX2(seekTime);
 };
-
-// --- FX Controls (mastered only) ---
 ['gainControl2','noiseReduction2','stereoWidth2'].forEach(id =>
   document.getElementById(id).addEventListener('input', () => {
     document.getElementById('gainVal2').innerText = document.getElementById('gainControl2').value;
@@ -669,265 +489,153 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
     else if (fxBuffer2) updateFXUI2();
   })
 );
-// --- Reference Tracks ---
-// ... (Existing code unchanged, not repeated for brevity)
 
-// --- Exciter Effect ---
-function createExciterNode(audioCtx, amount = 0.5, freq = 3000) {
-  const input = audioCtx.createGain();
-  const hp = audioCtx.createBiquadFilter();
-  hp.type = "highpass";
-  hp.frequency.value = freq;
-  hp.Q.value = 0.707;
-
-  const waveshaper = audioCtx.createWaveShaper();
-  const curve = new Float32Array(256);
-  for (let i = 0; i < 256; ++i) {
-    const x = (i - 128) / 128;
-    curve[i] = Math.tanh(x * 2.5);
-  }
-  waveshaper.curve = curve;
-  waveshaper.oversample = '4x';
-
-  const mix = audioCtx.createGain();
-  mix.gain.value = amount;
-  const output = audioCtx.createGain();
-  output.gain.value = 1;
-
-  input.connect(hp).connect(waveshaper).connect(mix);
-  mix.connect(output);
-  input.connect(output); // dry
-  return { input, output, setAmount: (a) => { mix.gain.value = a; } };
+// --- Payment Modal HTML Injection ---
+function injectPaymentModals() {
+  if (document.getElementById('payModal2')) return;
+  const payModal = document.createElement('div');
+  payModal.id = 'payModal2';
+  payModal.style = 'display:none;position:fixed;z-index:10001;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);';
+  payModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:400px;margin:10vh auto;border-radius:8px;box-shadow:0 4px 24px #222;">
+      <h3 style = "text-align:center">Choose Payment</h3>
+      <div style="margin:2em 0;display:flex;justify-content:space-between;">
+        <span id="paystackBtn2" style="flex:1;margin-right:1em;">
+        <img src = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png"/>
+        Paystack</span>
+        <div id="paypalBtn2" style="flex:1;"></div>
+      </div>
+      <button id="payCancel2" style="width:100%" style = "background-color:black;color:white;border-radius:10px">Cancel</button>
+    </div>
+  `;
+  const prepModal = document.createElement('div');
+  prepModal.id = 'prepModal2';
+  prepModal.style = 'display:none;position:fixed;z-index:10002;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);';
+  prepModal.innerHTML = `
+    <div style="background:#fff;padding:2em;max-width:350px;margin:20vh auto;border-radius:8px;box-shadow:0 4px 18px #222;">
+      <h4>Please wait while your download is being prepared...</h4>
+      <div id="prepSpinner2" style="margin:2em auto;text-align:center;">
+        <span style="display:inline-block;width:32px;height:32px;border:4px solid #ccc;border-top:4px solid #007bff;border-radius:50%;animation:spin 1s linear infinite;"></span>
+      </div>
+      <p id="prepStatus2" style="margin-top:1em;">Your download will begin automatically once ready.</p>
+    </div>
+    <style>
+      @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+  `;
+  document.body.appendChild(payModal);
+  document.body.appendChild(prepModal);
 }
+injectPaymentModals();
 
-// --- Plate Reverb Effect ---
-function createPlateReverbNode(audioCtx, duration = 2.0, decay = 2.5, mix = 0.2) {
-  const input = audioCtx.createGain();
-  const convolver = audioCtx.createConvolver();
-  convolver.buffer = createPlateImpulse(audioCtx, duration, decay);
-  const wetGain = audioCtx.createGain();
-  wetGain.gain.value = mix;
-  const dryGain = audioCtx.createGain();
-  dryGain.gain.value = 1 - mix;
-
-  input.connect(convolver).connect(wetGain);
-  input.connect(dryGain);
-
-  const output = audioCtx.createGain();
-  wetGain.connect(output);
-  dryGain.connect(output);
-
-  function updateReverb({ mix: m, decay: d, duration: t }) {
-    if (m !== undefined) wetGain.gain.value = m, dryGain.gain.value = 1 - m;
-    if (d || t) {
-      convolver.buffer = createPlateImpulse(audioCtx, t || duration, d || decay);
+document.getElementById('downloadLink2').onclick = function(e) {
+  e.preventDefault();
+  document.getElementById('payModal2').style.display = '';
+  renderPaypalButton();
+};
+document.getElementById('payCancel2').onclick = function() {
+  document.getElementById('payModal2').style.display = 'none';
+};
+document.getElementById('paystackBtn2').onclick = function() {
+  startPaystack();
+};
+function renderPaypalButton() {
+  if (document.getElementById('paypalBtn2').children.length) return;
+  paypal.Buttons({
+    style: {
+      layout: 'vertical',
+      color:  'blue',
+      shape:  'rect',
+      label:  'paypal'
+    },
+    createOrder: function(data, actions) {
+      return actions.order.create({
+        purchase_units: [{
+          amount: { value: '4' } // $10.00 USD, change as needed!
+        }]
+      });
+    },
+    onApprove: function(data, actions) {
+      return actions.order.capture().then(function(details) {
+        document.getElementById('payModal2').style.display = 'none';
+        paymentConfirmed('paypal', details);
+      });
+    },
+    onError: function(err) {
+      alert("Paypal error: " + err);
+    },
+    onCancel: function() {
+      alert("Paypal payment cancelled.");
     }
-  }
-  return { input, output, updateReverb };
+  }).render('#paypalBtn2');
 }
-
-function createPlateImpulse(audioCtx, duration = 2.0, decay = 2.5) {
-  const rate = audioCtx.sampleRate;
-  const length = Math.floor(duration * rate);
-  const buffer = audioCtx.createBuffer(2, length, rate);
-  for (let c = 0; c < 2; ++c) {
-    const data = buffer.getChannelData(c);
-    for (let i = 0; i < length; ++i) {
-      const t = i / rate;
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-3 * t / decay) * (1 - 0.14 * Math.sin(2 * Math.PI * 1.3 * t));
+function startPaystack() {
+  let email = prompt("Enter your email to proceed with payment (Paystack):", " ");
+  if (!email) {
+    alert("Payment cancelled. Email required.");
+    document.getElementById('payModal2').style.display = '';
+    return;
+  }
+  let amount = 500 * 1000 // Amount in kobo (₦5000)
+  let handler = PaystackPop.setup({
+    key: 'pk_live_656d3f492c531cc4599abaa10d424d6ac8313954',
+    email: email,
+    amount: amount,
+    currency: "NGN",
+    ref: 'master_' + Math.floor(Math.random()*1000000000),
+    label: "Mastered Track Download",
+    callback: function(response) {
+      document.getElementById('payModal2').style.display = 'none';
+      paymentConfirmed('paystack', response);
+    },
+    onClose: function() {
+      alert('Payment window closed. Please try again to proceed.');
+      document.getElementById('payModal2').style.display = '';
     }
-  }
-  return buffer;
+  });
+  handler.openIframe();
 }
-
-// --- Apply Mastering (with Exciter and Plate Reverb) ---
-async function applyMastering2(targetBuffer, referenceFeatures, userParams = {}) {
-  const audioCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
-    targetBuffer.numberOfChannels,
-    targetBuffer.length,
-    targetBuffer.sampleRate
-  );
-  const src = audioCtx.createBufferSource();
-  src.buffer = targetBuffer;
-
-  const targetRMS = Math.sqrt(targetBuffer.getChannelData(0).reduce((sum, v) => sum + v*v, 0) / targetBuffer.length);
-  const gainNode = audioCtx.createGain();
-  gainNode.gain.value = (referenceFeatures.rms / (targetRMS || 1)) * (userParams.gain || 1);
-
-  function makeEQ(type, freq, gain) {
-    const eq = audioCtx.createBiquadFilter();
-    eq.type = type; eq.frequency.value = freq; eq.gain.value = gain;
-    return eq;
-  }
-  const ref = referenceFeatures.freqData;
-  const n = ref.length;
-  const lowAvg = ref.slice(0, Math.floor(n * 0.15)).reduce((a,b)=>a+b,0) / Math.floor(n * 0.15);
-  const midAvg = ref.slice(Math.floor(n * 0.15), Math.floor(n * 0.5)).reduce((a,b)=>a+b,0) / (Math.floor(n * 0.5)-Math.floor(n * 0.15));
-  const highAvg = ref.slice(Math.floor(n * 0.5)).reduce((a,b)=>a+b,0) / (n-Math.floor(n * 0.5));
-  const eqLow = makeEQ("lowshelf", 150, lowAvg/10);
-  const eqMid = makeEQ("peaking", 1000, midAvg/10);
-  const eqHigh = makeEQ("highshelf", 6000, highAvg/10);
-
-  const comp = audioCtx.createDynamicsCompressor();
-  comp.threshold.value = -20 + referenceFeatures.std * 10;
-  comp.ratio.value = 2.5;
-  comp.attack.value = 0.003;
-  comp.release.value = 0.25;
-
-  let noiseGate;
-  if (userParams.noiseReduction && userParams.noiseReduction > 0) {
-    noiseGate = audioCtx.createDynamicsCompressor();
-    noiseGate.threshold.value = -60 + (userParams.noiseReduction * 30);
-    noiseGate.ratio.value = 8;
-    noiseGate.attack.value = 0.005;
-    noiseGate.release.value = 0.1;
-  }
-
-  let stereoNode = null;
-  if (userParams.stereoWidth !== undefined) {
-    const width = Math.max(0, Math.min(2, userParams.stereoWidth));
-    if (targetBuffer.numberOfChannels > 1) {
-      const splitter = audioCtx.createChannelSplitter(2);
-      const merger = audioCtx.createChannelMerger(2);
-      const leftGain = audioCtx.createGain();
-      const rightGain = audioCtx.createGain();
-
-      leftGain.gain.value = width;
-      rightGain.gain.value = width;
-
-      splitter.connect(leftGain, 0);
-      splitter.connect(rightGain, 1);
-
-      leftGain.connect(merger, 0, 0);
-      rightGain.connect(merger, 0, 1);
-
-      stereoNode = {splitter, merger, leftGain, rightGain};
-    }
-  }
-
-  // --- Exciter Node ---
-  const exciterAmount = userParams.exciterAmount !== undefined ? userParams.exciterAmount : 0.3;
-  const exciterFreq = userParams.exciterFreq !== undefined ? userParams.exciterFreq : 3500;
-  const exciter = createExciterNode(audioCtx, exciterAmount, exciterFreq);
-
-  // --- Plate Reverb Node ---
-  const reverbMix = userParams.reverbMix !== undefined ? userParams.reverbMix : 0.13;
-  const reverbDuration = userParams.reverbDuration !== undefined ? userParams.reverbDuration : 1.7;
-  const reverbDecay = userParams.reverbDecay !== undefined ? userParams.reverbDecay : 2.5;
-  const plateReverb = createPlateReverbNode(audioCtx, reverbDuration, reverbDecay, reverbMix);
-
-  let lastNode = gainNode;
-  if (noiseGate) {
-    lastNode.connect(noiseGate);
-    lastNode = noiseGate;
-  }
-  lastNode.connect(eqLow).connect(eqMid).connect(eqHigh);
-
-  eqHigh.connect(exciter.input);
-  lastNode = exciter.output;
-
-  lastNode.connect(comp);
-  lastNode = comp;
-
-  lastNode.connect(plateReverb.input);
-  lastNode = plateReverb.output;
-
-  if (stereoNode) {
-    lastNode.connect(stereoNode.splitter);
-    stereoNode.leftGain.connect(stereoNode.merger, 0, 0);
-    stereoNode.rightGain.connect(stereoNode.merger, 0, 1);
-    stereoNode.merger.connect(audioCtx.destination);
-  } else {
-    lastNode.connect(audioCtx.destination);
-  }
-
-  src.connect(gainNode);
-  src.start();
-  return audioCtx.startRendering();
+function paymentConfirmed(platform, details) {
+  document.getElementById('prepModal2').style.display = '';
+  document.getElementById('prepStatus2').textContent = "Your download will begin automatically once ready.";
+  prepareAndDownloadMasteredTrack();
 }
-
-// --- Realtime FX Chain (add exciter and reverb live preview) ---
-function makeRealtimeFXChain(buffer, params) {
-  fxCtx2 = new (window.AudioContext || window.webkitAudioContext)();
-  fxSource2 = fxCtx2.createBufferSource();
-  fxSource2.buffer = buffer;
-
-  fxGain2 = fxCtx2.createGain();
-  fxGain2.gain.value = params.gain || 1;
-
-  if (params.noiseReduction && params.noiseReduction > 0) {
-    fxNoise2 = fxCtx2.createDynamicsCompressor();
-    fxNoise2.threshold.value = -60 + (params.noiseReduction * 30);
-    fxNoise2.ratio.value = 8;
-    fxNoise2.attack.value = 0.005;
-    fxNoise2.release.value = 0.1;
-  } else {
-    fxNoise2 = null;
-  }
-
-  if (typeof params.stereoWidth !== "undefined" && buffer.numberOfChannels > 1) {
-    fxSplitter2 = fxCtx2.createChannelSplitter(2);
-    fxMerger2 = fxCtx2.createChannelMerger(2);
-    fxLeftGain2 = fxCtx2.createGain();
-    fxRightGain2 = fxCtx2.createGain();
-    fxLeftGain2.gain.value = Math.max(0, Math.min(2, params.stereoWidth));
-    fxRightGain2.gain.value = Math.max(0, Math.min(2, params.stereoWidth));
-  } else {
-    fxSplitter2 = fxMerger2 = fxLeftGain2 = fxRightGain2 = null;
-  }
-
-  // --- FX Exciter and Plate Reverb for live preview ---
-  const exciterAmount = params.exciterAmount !== undefined ? params.exciterAmount : 0.3;
-  const exciterFreq = params.exciterFreq !== undefined ? params.exciterFreq : 3500;
-  const exciter = createExciterNode(fxCtx2, exciterAmount, exciterFreq);
-
-  const reverbMix = params.reverbMix !== undefined ? params.reverbMix : 0.13;
-  const reverbDuration = params.reverbDuration !== undefined ? params.reverbDuration : 1.7;
-  const reverbDecay = params.reverbDecay !== undefined ? params.reverbDecay : 2.5;
-  const plateReverb = createPlateReverbNode(fxCtx2, reverbDuration, reverbDecay, reverbMix);
-
-  let last = fxSource2;
-  last.connect(fxGain2);
-  last = fxGain2;
-  if (fxNoise2) { last.connect(fxNoise2); last = fxNoise2; }
-
-  last.connect(exciter.input);
-  last = exciter.output;
-  last.connect(plateReverb.input);
-  last = plateReverb.output;
-
-  if (fxSplitter2 && fxLeftGain2 && fxRightGain2 && fxMerger2) {
-    last.connect(fxSplitter2);
-    fxSplitter2.connect(fxLeftGain2, 0);
-    fxSplitter2.connect(fxRightGain2, 1);
-    fxLeftGain2.connect(fxMerger2, 0, 0);
-    fxRightGain2.connect(fxMerger2, 0, 1);
-    last = fxMerger2;
-  }
-  last.connect(fxCtx2.destination);
-}
-
-// --- Get FX Params (now with exciter and reverb) ---
-function getCurrentFXParams() {
-  return {
-    gain: parseFloat(document.getElementById('gainControl2').value),
-    noiseReduction: parseFloat(document.getElementById('noiseReduction2').value),
-    stereoWidth: parseFloat(document.getElementById('stereoWidth2').value),
-    exciterAmount: parseFloat(document.getElementById('exciterAmount2')?.value ?? 0.3),
-    exciterFreq: parseFloat(document.getElementById('exciterFreq2')?.value ?? 3500),
-    reverbMix: parseFloat(document.getElementById('reverbMix2')?.value ?? 0.13),
-    reverbDuration: parseFloat(document.getElementById('reverbDuration2')?.value ?? 1.7),
-    reverbDecay: parseFloat(document.getElementById('reverbDecay2')?.value ?? 2.5)
-  }
-}
-
-// --- Add listeners for UI controls (exciter/reverb) ---
-['gainControl2','noiseReduction2','stereoWidth2','exciterAmount2','exciterFreq2','reverbMix2','reverbDuration2','reverbDecay2'].forEach(id => {
-  const el = document.getElementById(id);
-  if (el) {
-    el.addEventListener('input', () => {
-      if (fxBuffer2 && fxIsPlaying2) playFX2(getFXCurrentTime2());
-      else if (fxBuffer2) updateFXUI2();
+async function prepareAndDownloadMasteredTrack() {
+  try {
+    const {targetAudio, referenceFeatures} = window._mastering_temp;
+    const params = getCurrentFXParams();
+    document.getElementById('prepStatus2').textContent = "Preparing mastered track for download...";
+    let buffer = await applyMastering2(targetAudio, referenceFeatures, params);
+    document.getElementById('prepStatus2').textContent = "Encoding audio file...";
+    const wavData = await WavEncoder2.encode({
+      sampleRate: buffer.sampleRate,
+      channelData: Array.from({length: buffer.numberOfChannels}, (_, i) => buffer.getChannelData(i))
     });
+    document.getElementById('prepStatus2').textContent = "Your download is starting...";
+    const blob = new Blob([wavData], {type: "audio/wav"});
+    const url = URL.createObjectURL(blob);
+    const tmpLink = document.createElement('a');
+    tmpLink.href = url;
+    tmpLink.download = "mastered_track.wav";
+    document.body.appendChild(tmpLink);
+    tmpLink.click();
+    tmpLink.remove();
+    setTimeout(() => {
+      document.getElementById('prepModal2').style.display = 'none';
+    }, 2000);
+  } catch (err) {
+    document.getElementById('prepStatus2').textContent = "Error preparing download: " + err.message;
+    setTimeout(() => {
+      document.getElementById('prepModal2').style.display = 'none';
+    }, 4000);
   }
-});
+}
+
+/*
+-------------------------
+REQUIRED IN YOUR HTML:
+-------------------------
+<script src="https://js.paystack.co/v1/inline.js"></script>
+<script src="https://www.paypal.com/sdk/js?client-id=AZ_EW2Q9G-3VsiQYs8XaQsh0VUxPj_2cb2HBoSSUYie4PEmC2PLe1hfT-IcipBeRYygXwnnpOL00o6pY&currency=USD"></script>
+-------------------------
+*/
