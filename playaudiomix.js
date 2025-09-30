@@ -17,9 +17,9 @@ const REFERENCE_TRACKS2 = {
 
 async function fetchReferenceAudio2(genre) {
   const url = REFERENCE_TRACKS2[genre];
-  if (!url) throw new Error("Please Try Again ");
+  if (!url) throw new Error("Reference audio not found for genre: " + genre);
   const response = await fetch(url);
-  if (!response.ok) throw new Error("Network Failure.");
+  if (!response.ok) throw new Error("Failed to fetch reference audio.");
   return await response.arrayBuffer();
 }
 
@@ -445,7 +445,7 @@ document.getElementById('processBtn2').onclick = async () => {
     updateFXUI2(0);
 
   } catch (err) {
-    status.textContent = "Server not Responding, Try Again";
+    status.textContent = "Error: " + err.message;
     bar.style.width = "0%";
     text.textContent = "0%";
   } finally {
@@ -501,8 +501,8 @@ function injectPaymentModals() {
       <h3 style = "text-align:center">Choose Payment</h3>
       <div style="margin:2em 0;display:flex;justify-content:space-between;">
         <span id="paystackBtn2" style="flex:1;margin-right:1em;">
-       <a> <img src = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png"/>
-        Paystack</a></span>
+     <a>   <img src = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png"/>
+        Paystack </a></span>
         <div id="paypalBtn2" style="flex:1;"></div>
       </div>
       <button id="payCancel2" style="width:100%" style = "background-color:black;color:white;border-radius:10px">Cancel</button>
