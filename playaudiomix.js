@@ -445,7 +445,7 @@ document.getElementById('processBtn2').onclick = async () => {
     updateFXUI2(0);
 
   } catch (err) {
-    status.textContent = "Error: " + err.message;
+    status.textContent = "Server not Responding, Try Again";
     bar.style.width = "0%";
     text.textContent = "0%";
   } finally {
@@ -497,12 +497,12 @@ function injectPaymentModals() {
   payModal.id = 'payModal2';
   payModal.style = 'display:none;position:fixed;z-index:10001;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);';
   payModal.innerHTML = `
-    <div style="background:#fff;padding:2em;max-width:400px;margin:10vh auto;border-radius:8px;box-shadow:0 4px 24px #222;">
+    <div style="background:#fff;padding:2em;max-width:400px;margin:10vh auto;border-radius:8px;box-shadow:0 4px 24px #222;overflow:scroll">
       <h3 style = "text-align:center">Choose Payment</h3>
       <div style="margin:2em 0;display:flex;justify-content:space-between;">
         <span id="paystackBtn2" style="flex:1;margin-right:1em;">
-        <img src = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png"/>
-        Paystack</span>
+       <a> <img src = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png"/>
+        Paystack</a></span>
         <div id="paypalBtn2" style="flex:1;"></div>
       </div>
       <button id="payCancel2" style="width:100%" style = "background-color:black;color:white;border-radius:10px">Cancel</button>
