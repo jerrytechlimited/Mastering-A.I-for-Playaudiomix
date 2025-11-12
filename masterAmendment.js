@@ -492,142 +492,178 @@ document.getElementById('fxProgressBar2').onclick = function(e) {
 );
 
 
+// --- Payment Modal HTML Injection ---
 function injectPaymentModals() {
   if (document.getElementById('payModal2')) return;
 
-  // Payment Modal
+  // Create modal wrapper
   const payModal = document.createElement('div');
   payModal.id = 'payModal2';
-  payModal.style.cssText = `
+  payModal.style = `
     display:none;
     position:fixed;
     z-index:10001;
-    left:0; top:0;
-    width:100vw; height:100vh;
+    left:0;
+    top:0;
+    width:100vw;
+    height:100vh;
     background:rgba(0,0,0,0.6);
-    align-items:center;
-    justify-content:center;
+    overflow:auto;
   `;
 
+  // Modal content
   payModal.innerHTML = `
     <div style="
       background:#fff;
-      padding:1.8em;
-      max-width:420px;
-      width:90%;
-      border-radius:10px;
-      box-shadow:0 4px 24px rgba(0,0,0,0.4);
-      max-height:85vh;
+      padding:2em;
+      max-width:400px;
+      margin:10vh auto;
+      border-radius:8px;
+      box-shadow:0 4px 24px #222;
       overflow:auto;
     ">
-      <h3 style="text-align:center;margin-bottom:1em;">Choose Payment</h3>
-      <div style="display:flex;gap:1em;justify-content:space-between;flex-wrap:wrap;">
+      <h3 style="text-align:center;">Choose Payment</h3>
+      <div style="margin:2em 0;display:flex;justify-content:space-between;gap:1em;flex-wrap:wrap;">
         <button id="paystackBtn2" style="
-          flex:1;display:flex;align-items:center;justify-content:center;
-          background:#f0f0f0;border:none;padding:1em;border-radius:8px;
-          cursor:pointer;transition:0.3s;
+          flex:1;
+          padding:10px;
+          background:#0d6efd;
+          color:#fff;
+          border:none;
+          border-radius:6px;
+          cursor:pointer;
         ">
-          <img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png" 
-               style="width:40px;margin-right:8px;">
+          <img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhAZkdnfFm5lyRBdhsFSnUDUhYjZ8GL6zgHmP7DoDHzxuSusWMm58zs7uMIIZ5_kC_5BA4DRyx6cCSXuUkmNOC6Wzpmaa4PDh_AdIU0fkexvlhbAqWjfTVAsc7-iDNGQ2Rhz_93a4LzuzhnMGqpjo6coQOCj92F9woVQq19h4WxhoDr2t3pINxQekcT5JRZ/s320/paystack.png" width="100"/><br>
           Paystack
         </button>
-        <div id="paypalBtn2" style="
-          flex:1;
-          min-height:45px;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-        "></div>
+        <div id="paypalBtn2" style="flex:1;overflow:auto;"></div>
       </div>
       <button id="payCancel2" style="
-        margin-top:1.5em;width:100%;
-        padding:0.8em;background:black;color:white;
-        border:none;border-radius:8px;cursor:pointer;
+        width:100%;
+        background-color:#000;
+        color:#fff;
+        padding:10px;
+        border:none;
+        border-radius:10px;
+        cursor:pointer;
       ">Cancel</button>
     </div>
   `;
 
-  // Preparation Modal
   const prepModal = document.createElement('div');
   prepModal.id = 'prepModal2';
-  prepModal.style.cssText = `
-    display:none;position:fixed;z-index:10002;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);
-    align-items:center;justify-content:center;
+  prepModal.style = `
+    display:none;
+    position:fixed;
+    z-index:10002;
+    left:0;
+    top:0;
+    width:100vw;
+    height:100vh;
+    background:rgba(0,0,0,0.4);
   `;
   prepModal.innerHTML = `
-    <div style="background:#fff;padding:2em;max-width:350px;width:90%;border-radius:8px;box-shadow:0 4px 18px #222;">
+    <div style="background:#fff;padding:2em;max-width:350px;margin:20vh auto;border-radius:8px;box-shadow:0 4px 18px #222;">
       <h4>Please wait while your download is being prepared...</h4>
       <div id="prepSpinner2" style="margin:2em auto;text-align:center;">
         <span style="display:inline-block;width:32px;height:32px;border:4px solid #ccc;border-top:4px solid #007bff;border-radius:50%;animation:spin 1s linear infinite;"></span>
       </div>
       <p id="prepStatus2" style="margin-top:1em;">Your download will begin automatically once ready.</p>
     </div>
-    <style>@keyframes spin {100%{transform:rotate(360deg);}}</style>
+    <style>@keyframes spin {100% {transform: rotate(360deg);}}</style>
   `;
 
   document.body.appendChild(payModal);
   document.body.appendChild(prepModal);
+
+  // Add event listeners
+  document.getElementById('payCancel2').onclick = function () {
+    document.getElementById('payModal2').style.display = 'none';
+    document.body.style.overflow = ''; // Re-enable scroll
+  };
+
+  document.getElementById('paystackBtn2').onclick = function () {
+    startPaystack();
+  };
 }
+
+// --- Initialize modal ---
 injectPaymentModals();
 
-document.getElementById('downloadLink2').onclick = function(e) {
+// --- Trigger Modal ---
+document.getElementById('downloadLink2').onclick = function (e) {
   e.preventDefault();
-  const modal = document.getElementById('payModal2');
-  modal.style.display = 'flex';
-  // Delay rendering until modal is visible
-  setTimeout(() => renderPaypalButton(), 300);
+  document.getElementById('payModal2').style.display = 'block';
+  document.body.style.overflow = 'hidden'; // Prevent body scroll when modal is open
+  renderPaypalButton();
 };
-document.getElementById('payCancel2').onclick = () =>
-  (document.getElementById('payModal2').style.display = 'none');
 
+// --- PayPal Button Rendering ---
 function renderPaypalButton() {
-  const paypalDiv = document.getElementById('paypalBtn2');
-  paypalDiv.innerHTML = ''; // clear stale button if any
-
+  if (document.getElementById('paypalBtn2').children.length) return;
   paypal.Buttons({
-    style: { layout: 'vertical', color: 'blue', shape: 'rect', label: 'paypal' },
-    createOrder: (data, actions) =>
-      actions.order.create({
-        purchase_units: [{ amount: { value: '4' } }],
-      }),
-    onApprove: (data, actions) =>
-      actions.order.capture().then(details => {
+    style: {
+      layout: 'vertical',
+      color: 'blue',
+      shape: 'rect',
+      label: 'paypal'
+    },
+    createOrder: function (data, actions) {
+      return actions.order.create({
+        purchase_units: [{ amount: { value: '4' } }]
+      });
+    },
+    onApprove: function (data, actions) {
+      return actions.order.capture().then(function (details) {
         document.getElementById('payModal2').style.display = 'none';
+        document.body.style.overflow = '';
         paymentConfirmed('paypal', details);
-      }),
-    onError: err => alert('PayPal error: ' + err),
-    onCancel: () => alert('PayPal payment cancelled.'),
+      });
+    },
+    onError: function (err) {
+      alert("Paypal error: " + err);
+    },
+    onCancel: function () {
+      alert("Paypal payment cancelled.");
+    }
   }).render('#paypalBtn2');
 }
 
+// --- Paystack Function ---
 function startPaystack() {
-  const email = prompt('Enter your email for Paystack payment:', '');
-  if (!email) return alert('Payment cancelled.');
-  const amount = 500 * 1000; // ₦5000
-  const handler = PaystackPop.setup({
+  let email = prompt("Enter your email to proceed with payment (Paystack):", "");
+  if (!email) {
+    alert("Payment cancelled. Email required.");
+    return;
+  }
+  let amount = 500 * 1000; // ₦5000 in kobo
+
+  let handler = PaystackPop.setup({
     key: 'pk_live_656d3f492c531cc4599abaa10d424d6ac8313954',
-    email,
-    amount,
-    currency: 'NGN',
+    email: email,
+    amount: amount,
+    currency: "NGN",
     ref: 'master_' + Math.floor(Math.random() * 1000000000),
-    callback: function(response) {
+    label: "Mastered Track Download",
+    callback: function (response) {
       document.getElementById('payModal2').style.display = 'none';
+      document.body.style.overflow = '';
       paymentConfirmed('paystack', response);
     },
-    onClose: function() {
-      alert('Payment window closed.');
-      document.getElementById('payModal2').style.display = 'flex';
-    },
+    onClose: function () {
+      alert('Payment window closed. Please try again to proceed.');
+    }
   });
   handler.openIframe();
 }
 
+// --- Payment Confirmation ---
 function paymentConfirmed(platform, details) {
-  document.getElementById('prepModal2').style.display = 'flex';
-  document.getElementById('prepStatus2').textContent =
-    'Your download will begin automatically once ready.';
+  document.getElementById('prepModal2').style.display = 'block';
+  document.getElementById('prepStatus2').textContent = "Your download will begin automatically once ready.";
   prepareAndDownloadMasteredTrack();
 }
+
 
 
 async function prepareAndDownloadMasteredTrack() {
