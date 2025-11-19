@@ -1,14 +1,12 @@
 // --- IMPORTANT ---
-// Must load tfjs and tfjs-yamnet in your HTML, in this ORDER:
-/*
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
-<script src="https://unpkg.com/@auduno/tfjs-yamnet/dist/yamnet.js"></script>
-<script src="audio_mastering_yamnet_fixed.js"></script>
-*/
+// Required scripts in this ORDER (in your HTML):
+// <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+// <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/yamnet"></script>
+// <script src="audio_mastering_yamnet_tfjs.js"></script>
 
-// --- Reference Tracks ---
+// --- Reference Tracks: Replace ... with actual URLs! ---
 const REFERENCE_TRACKS2 = {
-  JAZZ: "...",  // Fill these with actual URLs
+  JAZZ: "...",
   AFROBEAT: "...",
   BLUES: "...",
   "GOSPEL WORSHIP": "...",
@@ -27,7 +25,6 @@ const REFERENCE_TRACKS2 = {
 let yamnetModel = null;
 let yamnetReady = false;
 
-// Show loading status initially; this element must exist in your HTML
 if (document.getElementById('status2')) {
   document.getElementById('status2').textContent = "Loading ML model...";
 }
@@ -35,14 +32,10 @@ if (document.getElementById('status2')) {
 // Load the model when DOM is ready
 window.addEventListener('DOMContentLoaded', async () => {
   try {
-    // Make sure yamnet global object exists
-    if (!window.yamnet || typeof window.yamnet.load !== "function") {
-      throw new Error("YamNet script not loaded. Check your <script> order!");
-    }
-    yamnetModel = await window.yamnet.load();
+    yamnetModel = await yamnet.load();
     yamnetReady = true;
     if (document.getElementById('status2')) {
-      document.getElementById('status2').textContent = ""; // Model loaded
+      document.getElementById('status2').textContent = "";
     }
     console.log("YamNet loaded:", yamnetModel);
   } catch (err) {
@@ -75,7 +68,6 @@ function bufferToMonoPcm(audioBuffer) {
 }
 
 function resampleTo16kHz(input, inputSampleRate) {
-  // Linear interpolation downsampler (for short tracks)
   const outputSampleRate = 16000;
   const sampleRatio = inputSampleRate / outputSampleRate;
   const outputLength = Math.floor(input.length / sampleRatio);
@@ -84,26 +76,26 @@ function resampleTo16kHz(input, inputSampleRate) {
     const idx = i * sampleRatio;
     const idx0 = Math.floor(idx);
     const idx1 = Math.min(idx0 + 1, input.length - 1);
-    // Linear interpolate
     output[i] = input[idx0] + (input[idx1] - input[idx0]) * (idx - idx0);
   }
   return output;
 }
 
-// --- ML-powered embedding and matching ---
+// --- ML-powered embedding using YamNet ---
 async function getYamnetEmbedding(audioBuffer) {
-  // Make sure model is loaded
   if (!yamnetModel) throw new Error("YamNet model not loaded yet!");
   let pcm = bufferToMonoPcm(audioBuffer);
   let sr = audioBuffer.sampleRate;
-  // Downsample to 16kHz if needed
   if (sr !== 16000) {
     pcm = resampleTo16kHz(pcm, sr);
+    sr = 16000;
   }
-  // YamNet expects Float32Array
-  const embTensor = await yamnetModel.embed(pcm);
-  // embTensor shape: [N,128], average across all frames for one embedding
-  return embTensor.mean(0).arraySync(); // returns [128]
+  // YamNet expects: tf.tensor1d, sampleRate=16000
+  const inputTensor = tf.tensor1d(pcm);
+  const result = await yamnetModel.predict(inputTensor, sr);
+  // result.embeddings: tf.Tensor2d (frames, 1024)
+  const meanEmbedding = result.embeddings.mean(0); // shape [1024]
+  return await meanEmbedding.array();
 }
 
 function cosineSimilarity(a, b) {
@@ -136,7 +128,6 @@ async function applyMastering2(targetBuffer, referenceEmbedding, userParams = {}
     eq.type = type; eq.frequency.value = freq; eq.gain.value = gain;
     return eq;
   }
-  // Demo logic: you can map embedding dimensions to specific EQ/gain for production
   const eqLow = makeEQ("lowshelf", 150, embeddingAvg / 8);
   const eqMid = makeEQ("peaking", 1000, embeddingAvg / 10);
   const eqHigh = makeEQ("highshelf", 6000, embeddingAvg / 12);
@@ -193,7 +184,7 @@ async function applyMastering2(targetBuffer, referenceEmbedding, userParams = {}
   return audioCtx.startRendering();
 }
 
-// --- WavEncoder stays unchanged ---
+// --- WavEncoder as before ---
 const WavEncoder2 = {
   encode({ sampleRate, channelData }) {
     const numChannels = channelData.length;
@@ -307,9 +298,7 @@ document.getElementById('processBtn2').onclick = async () => {
   }
 }
 
-// --- All remaining playback, payment, and download logic unchanged. You only need to update references in mastering logic
-// For the download modal, make sure to reference 'referenceEmbedding' not 'referenceFeatures'
-
+// --- Download handler ---
 async function prepareAndDownloadMasteredTrack() {
   try {
     const { targetAudio, referenceEmbedding } = window._mastering_temp;
@@ -340,8 +329,6 @@ async function prepareAndDownloadMasteredTrack() {
     }, 4000);
   }
 }
-
-// --- All other supporting code is the same as your original version ---
 
 // --- Tips ---
 // - Double check you have an element with id='status2' in your HTML for model load feedback.
