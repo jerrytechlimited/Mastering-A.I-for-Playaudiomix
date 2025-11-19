@@ -1,13 +1,14 @@
 // --- IMPORTANT ---
-// Must load tfjs and tfjs-yamnet in your HTML:
+// Must load tfjs and tfjs-yamnet in your HTML, in this ORDER:
 /*
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 <script src="https://unpkg.com/@auduno/tfjs-yamnet/dist/yamnet.js"></script>
+<script src="audio_mastering_yamnet_fixed.js"></script>
 */
 
 // --- Reference Tracks ---
 const REFERENCE_TRACKS2 = {
-  JAZZ: "...",
+  JAZZ: "...",  // Fill these with actual URLs
   AFROBEAT: "...",
   BLUES: "...",
   "GOSPEL WORSHIP": "...",
@@ -23,16 +24,36 @@ const REFERENCE_TRACKS2 = {
 };
 
 // --- YamNet model loading ---
-let yamnet = null;
+let yamnetModel = null;
 let yamnetReady = false;
-(async function loadYamNet() {
-  document.getElementById('status2').textContent = "Loading ML model...";
-  yamnet = await yamnetjs.load();
-  yamnetReady = true;
-  document.getElementById('status2').textContent = "";
-})();
 
-// --- Utility: decode audio and get PCM Float32Array ---
+// Show loading status initially; this element must exist in your HTML
+if (document.getElementById('status2')) {
+  document.getElementById('status2').textContent = "Loading ML model...";
+}
+
+// Load the model when DOM is ready
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    // Make sure yamnet global object exists
+    if (!window.yamnet || typeof window.yamnet.load !== "function") {
+      throw new Error("YamNet script not loaded. Check your <script> order!");
+    }
+    yamnetModel = await window.yamnet.load();
+    yamnetReady = true;
+    if (document.getElementById('status2')) {
+      document.getElementById('status2').textContent = ""; // Model loaded
+    }
+    console.log("YamNet loaded:", yamnetModel);
+  } catch (err) {
+    if (document.getElementById('status2')) {
+      document.getElementById('status2').textContent = "Error loading ML model: " + err.message;
+    }
+    console.error(err);
+  }
+});
+
+// --- Audio Utility Functions ---
 async function fetchReferenceAudio2(genre) {
   const url = REFERENCE_TRACKS2[genre];
   if (!url) throw new Error("Reference audio not found for genre: " + genre);
@@ -53,22 +74,36 @@ function bufferToMonoPcm(audioBuffer) {
   return channelData;
 }
 
+function resampleTo16kHz(input, inputSampleRate) {
+  // Linear interpolation downsampler (for short tracks)
+  const outputSampleRate = 16000;
+  const sampleRatio = inputSampleRate / outputSampleRate;
+  const outputLength = Math.floor(input.length / sampleRatio);
+  const output = new Float32Array(outputLength);
+  for (let i = 0; i < outputLength; ++i) {
+    const idx = i * sampleRatio;
+    const idx0 = Math.floor(idx);
+    const idx1 = Math.min(idx0 + 1, input.length - 1);
+    // Linear interpolate
+    output[i] = input[idx0] + (input[idx1] - input[idx0]) * (idx - idx0);
+  }
+  return output;
+}
+
 // --- ML-powered embedding and matching ---
 async function getYamnetEmbedding(audioBuffer) {
-  // Convert AudioBuffer to Float32 PCM and send to YamNet
-  const pcm = bufferToMonoPcm(audioBuffer);
-  // YamNet expects Float32Array, normalized to [-1, 1], sampleRate=16000
-  // Resample if needed (assume 44kHz input, downsample to 16kHz)
-  const sampleRate = audioBuffer.sampleRate;
-  if (sampleRate !== 16000) {
-    // Simple downsampler (production: use SRC library)
-    let step = Math.round(sampleRate / 16000);
-    let resampled = new Float32Array(Math.floor(pcm.length / step));
-    for (let i = 0; i < resampled.length; i++) resampled[i] = pcm[i * step];
-    return (await yamnet.embed(resampled)).mean(0).arraySync();
+  // Make sure model is loaded
+  if (!yamnetModel) throw new Error("YamNet model not loaded yet!");
+  let pcm = bufferToMonoPcm(audioBuffer);
+  let sr = audioBuffer.sampleRate;
+  // Downsample to 16kHz if needed
+  if (sr !== 16000) {
+    pcm = resampleTo16kHz(pcm, sr);
   }
-  // If already 16kHz
-  return (await yamnet.embed(pcm)).mean(0).arraySync();
+  // YamNet expects Float32Array
+  const embTensor = await yamnetModel.embed(pcm);
+  // embTensor shape: [N,128], average across all frames for one embedding
+  return embTensor.mean(0).arraySync(); // returns [128]
 }
 
 function cosineSimilarity(a, b) {
@@ -78,10 +113,10 @@ function cosineSimilarity(a, b) {
     normA += a[i] * a[i];
     normB += b[i] * b[i];
   }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1e-8);
 }
 
-// --- Mastering chain (unchanged except referenceFeatures replaced by ML embeddings) ---
+// --- Mastering chain (uses ML embedding average for gain/EQ as stub logic) ---
 async function applyMastering2(targetBuffer, referenceEmbedding, userParams = {}) {
   const audioCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
     targetBuffer.numberOfChannels,
@@ -91,8 +126,7 @@ async function applyMastering2(targetBuffer, referenceEmbedding, userParams = {}
   const src = audioCtx.createBufferSource();
   src.buffer = targetBuffer;
 
-  // Optionally use referenceEmbedding to set mastering params (e.g. gain)
-  // Demo: Map average of embedding to gain and EQ
+  // Use the average of the embedding for gain/EQ as a demonstration
   const embeddingAvg = referenceEmbedding.reduce((sum, v) => sum + v, 0) / referenceEmbedding.length;
   const gainNode = audioCtx.createGain();
   gainNode.gain.value = embeddingAvg * (userParams.gain || 1);
@@ -102,7 +136,7 @@ async function applyMastering2(targetBuffer, referenceEmbedding, userParams = {}
     eq.type = type; eq.frequency.value = freq; eq.gain.value = gain;
     return eq;
   }
-  // Use ML embedding stats for EQ. This is stub logic.
+  // Demo logic: you can map embedding dimensions to specific EQ/gain for production
   const eqLow = makeEQ("lowshelf", 150, embeddingAvg / 8);
   const eqMid = makeEQ("peaking", 1000, embeddingAvg / 10);
   const eqHigh = makeEQ("highshelf", 6000, embeddingAvg / 12);
@@ -159,7 +193,7 @@ async function applyMastering2(targetBuffer, referenceEmbedding, userParams = {}
   return audioCtx.startRendering();
 }
 
-// --- WavEncoder stays unchanged (same as your version) ---
+// --- WavEncoder stays unchanged ---
 const WavEncoder2 = {
   encode({ sampleRate, channelData }) {
     const numChannels = channelData.length;
@@ -192,19 +226,17 @@ const WavEncoder2 = {
   }
 };
 
-// --- UI and Player code mostly unchanged ---
-// (All player, payment modal, download logic from your code, use the mastering and matching logic below)
-
-// --- Mastering Button ---
+// --- Mastering Button logic ---
 document.getElementById('processBtn2').onclick = async () => {
+  const status = document.getElementById('status2');
   if (!yamnetReady) {
-    document.getElementById('status2').textContent = "Please wait, ML model loading...";
+    status.textContent = "Please wait, ML model loading...";
     return;
   }
   const targetFile = document.getElementById('targetAudio2').files[0];
   const genreSelect = document.getElementById('genreSelect2');
   const selectedGenre = genreSelect.value;
-  const status = document.getElementById('status2');
+
   status.textContent = "Processing...";
   document.getElementById('outputPlayerSection2').style.display = "none";
   document.getElementById('downloadLink2').style.display = "none";
@@ -227,20 +259,19 @@ document.getElementById('processBtn2').onclick = async () => {
   }, 200);
 
   try {
-    // decode audio files
+    status.textContent = "Decoding reference track...";
     const referenceArrayBuffer = await fetchReferenceAudio2(selectedGenre);
     const refAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const referenceAudio = await refAudioCtx.decodeAudioData(referenceArrayBuffer);
+
+    status.textContent = "Decoding target track...";
     const targetAudio = await readAudioFile2(targetFile);
 
-    // ML-powered embeddings
     status.textContent = "Extracting ML features...";
     const referenceEmbedding = await getYamnetEmbedding(referenceAudio);
     const targetEmbedding = await getYamnetEmbedding(targetAudio);
 
-    // Measure similarity
     const similarity = cosineSimilarity(referenceEmbedding, targetEmbedding);
-    // Threshold: 0.80+ means very close
     let userParams = { gain: 1, noiseReduction: 0, stereoWidth: 1 };
     status.textContent = `Similarity (ml): ${similarity.toFixed(2)}. Mastering...`;
 
@@ -270,15 +301,15 @@ document.getElementById('processBtn2').onclick = async () => {
     status.textContent = "Error: " + err.message;
     bar.style.width = "0%";
     text.textContent = "0%";
+    console.error(err);
   } finally {
     clearInterval(interval);
   }
 }
 
-// --- Rest of your code, unchanged except for the mastering/matching logic ---
-// Players, payment modal, download logic, UI, etc. from original file
+// --- All remaining playback, payment, and download logic unchanged. You only need to update references in mastering logic
+// For the download modal, make sure to reference 'referenceEmbedding' not 'referenceFeatures'
 
-// --- Download handler (update mastering referenceFeatures to referenceEmbedding) ---
 async function prepareAndDownloadMasteredTrack() {
   try {
     const { targetAudio, referenceEmbedding } = window._mastering_temp;
@@ -310,7 +341,12 @@ async function prepareAndDownloadMasteredTrack() {
   }
 }
 
+// --- All other supporting code is the same as your original version ---
 
+// --- Tips ---
+// - Double check you have an element with id='status2' in your HTML for model load feedback.
+// - Make sure TFJS and YamNet scripts are loaded before this file.
+// - The reference tracks must be valid URLs!
 // --- Payment Modal HTML Injection ---
 function injectPaymentModals() {
   if (document.getElementById('payModal2')) return;
